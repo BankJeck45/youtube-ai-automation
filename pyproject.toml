@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "verticals"
-version = "3.0.1"
+version = "3.1.0"
 description = "AI-native vertical video engine with niche intelligence"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -19,7 +19,7 @@ dependencies = [
     "google-auth-oauthlib>=1.1.0,<2.0",
     "openai-whisper>=20231117",
     "PyYAML>=6.0,<7.0",
-    "edge-tts>=6.1.0,<7.0",
+    "edge-tts>=7.0,<8.0",
 ]
 
 [project.optional-dependencies]

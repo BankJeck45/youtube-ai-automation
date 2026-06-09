@@ -7,6 +7,19 @@ from .config import MEDIA_DIR, run_cmd
 from .log import log
 
 
+def _ffmpeg_has_libass() -> bool:
+    """Check whether this ffmpeg build ships the `ass` filter (libass).
+
+    Some builds (e.g. minimal/static ones) omit libass; burning captions in
+    would fail with `No such filter: 'ass'`, so we skip burn-in instead.
+    """
+    try:
+        r = run_cmd(["ffmpeg", "-hide_banner", "-filters"], capture=True)
+        return any(line.split()[1:2] == ["ass"] for line in r.stdout.splitlines())
+    except Exception:
+        return False
+
+
 def get_audio_duration(path: Path) -> float:
     """Get duration of an audio file in seconds."""
     r = run_cmd(
@@ -59,9 +72,17 @@ def assemble_video(
     # Determine video filter (captions via ASS)
     vf_parts = []
     if ass_path and Path(ass_path).exists():
-        # Escape special chars in path for ffmpeg filter
-        escaped_ass = str(ass_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        vf_parts.append(f"ass={escaped_ass}")
+        if _ffmpeg_has_libass():
+            # Escape special chars in path for ffmpeg filter
+            escaped_ass = str(ass_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+            vf_parts.append(f"ass={escaped_ass}")
+        else:
+            log(
+                "WARNING: this ffmpeg build has no libass — captions will NOT "
+                "be burned in. The SRT is still uploaded to YouTube. Install "
+                "an ffmpeg with libass (brew/apt builds include it) for "
+                "burned-in captions."
+            )
     vf = ",".join(vf_parts) if vf_parts else None
 
     if music_path and Path(music_path).exists():
