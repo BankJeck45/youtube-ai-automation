@@ -175,7 +175,14 @@ def _call_gemini(prompt: str, max_tokens: int) -> str:
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
     )
     if r.status_code != 200:
-        raise RuntimeError(f"Gemini API {r.status_code}: {r.text[:300]}")
+        hint = ""
+        if r.status_code == 403:
+            hint = (
+                " — check that GEMINI_API_KEY is set in this environment and is "
+                "an AI Studio key (https://aistudio.google.com/apikey), not a "
+                "Vertex AI / service-account credential"
+            )
+        raise RuntimeError(f"Gemini API {r.status_code}: {r.text[:300]}{hint}")
 
     data = r.json()
     parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])

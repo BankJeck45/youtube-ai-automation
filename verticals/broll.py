@@ -31,7 +31,14 @@ def _generate_image_gemini(prompt: str, output_path: Path, api_key: str):
             detail = r.json().get("error", {}).get("message", r.text[:200])
         except Exception:
             detail = r.text[:200]
-        raise RuntimeError(f"Gemini API {r.status_code}: {detail}")
+        hint = ""
+        if r.status_code == 403:
+            hint = (
+                " — check that GEMINI_API_KEY is set in this environment and is "
+                "an AI Studio key (https://aistudio.google.com/apikey), not a "
+                "Vertex AI / service-account credential"
+            )
+        raise RuntimeError(f"Gemini API {r.status_code}: {detail}{hint}")
     data = r.json()
     # Extract image from response parts
     for part in data.get("candidates", [{}])[0].get("content", {}).get("parts", []):
@@ -54,6 +61,14 @@ def _fallback_frame(i: int, out_dir: Path) -> Path:
 def generate_broll(prompts: list, out_dir: Path) -> list[Path]:
     """Generate 3 b-roll frames via Gemini Imagen, with fallback."""
     api_key = get_gemini_key()
+    if not api_key:
+        log(
+            "GEMINI_API_KEY not set — using solid-color fallback frames. "
+            "Get an AI Studio key at https://aistudio.google.com/apikey "
+            "(must be an AI Studio key; Vertex AI / service-account credentials "
+            "are rejected with a 403 'unregistered callers' error)."
+        )
+        return [_fallback_frame(i, out_dir) for i in range(min(3, max(len(prompts), 1)))]
     frames = []
 
     for i, prompt in enumerate(prompts[:3]):

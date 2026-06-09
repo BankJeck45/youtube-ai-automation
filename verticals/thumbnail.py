@@ -34,7 +34,14 @@ def _generate_thumb_image(prompt: str, output_path: Path, api_key: str):
             detail = r.json().get("error", {}).get("message", r.text[:200])
         except Exception:
             detail = r.text[:200]
-        raise RuntimeError(f"Gemini API {r.status_code}: {detail}")
+        hint = ""
+        if r.status_code == 403:
+            hint = (
+                " — check that GEMINI_API_KEY is set in this environment and is "
+                "an AI Studio key (https://aistudio.google.com/apikey), not a "
+                "Vertex AI / service-account credential"
+            )
+        raise RuntimeError(f"Gemini API {r.status_code}: {detail}{hint}")
 
     data = r.json()
     for part in data.get("candidates", [{}])[0].get("content", {}).get("parts", []):
@@ -120,6 +127,13 @@ def generate_thumbnail(draft: dict, out_dir: Path) -> Path:
     Returns path to the final thumbnail PNG.
     """
     api_key = get_gemini_key()
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY not set — cannot generate thumbnail. Get an "
+            "AI Studio key at https://aistudio.google.com/apikey (Vertex AI / "
+            "service-account credentials are rejected with a 403 "
+            "'unregistered callers' error)."
+        )
     prompt = draft.get("thumbnail_prompt", "Cinematic YouTube thumbnail")
     title = draft.get("youtube_title", draft.get("news", ""))
     job_id = draft.get("job_id", "unknown")
