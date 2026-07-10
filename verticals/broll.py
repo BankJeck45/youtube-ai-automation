@@ -11,12 +11,12 @@ from .log import log
 from .retry import with_retry
 
 
-@with_retry(max_retries=3, base_delay=2.0)
+@with_retry(max_retries=1, base_delay=2.0)
 def _generate_image_gemini(prompt: str, output_path: Path, api_key: str):
-    """Generate image via Gemini native image generation (free tier compatible)."""
+    """Generate image via Gemini (uses gemini-1.5-flash with image modality)."""
     url = (
         "https://generativelanguage.googleapis.com/v1beta"
-        "/models/gemini-2.0-flash-exp-image-generation:generateContent"
+        "/models/gemini-1.5-flash:generateContent"
     )
     body = {
         "contents": [{"parts": [{"text": f"Generate an image: {prompt}"}]}],

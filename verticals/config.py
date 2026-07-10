@@ -220,6 +220,10 @@ def get_minimax_key() -> str:
     return _get_key("MINIMAX_API_KEY")
 
 
+def get_openrouter_key() -> str:
+    return _get_key("OPENROUTER_API_KEY")
+
+
 def get_60db_key() -> str:
     return _get_key("SIXTYDB_API_KEY")
 

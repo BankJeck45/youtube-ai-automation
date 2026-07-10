@@ -14,6 +14,7 @@ from .config import (
     get_claude_backend,
     get_gemini_key,
     get_minimax_key,
+    get_openrouter_key,
     call_claude_cli,
 )
 from .log import log
@@ -45,6 +46,8 @@ def get_provider(name: str | None = None) -> str:
         return "gemini"
     if get_minimax_key():
         return "minimax"
+    if get_openrouter_key():
+        return "openrouter"
     if os.environ.get("OPENAI_API_KEY") or cfg.get("OPENAI_API_KEY"):
         return "openai"
     if _ollama_available():
@@ -98,6 +101,8 @@ def call_llm(prompt: str, provider: str | None = None, max_tokens: int = 1500) -
         return _call_minimax(prompt, max_tokens)
     elif provider == "openai":
         return _call_openai(prompt, max_tokens)
+    elif provider == "openrouter":
+        return _call_openrouter(prompt, max_tokens)
     elif provider == "ollama":
         return _call_ollama(prompt)
     elif provider == "litellm":
@@ -217,6 +222,42 @@ def _call_openai(prompt: str, max_tokens: int) -> str:
     )
     if r.status_code != 200:
         raise RuntimeError(f"OpenAI API {r.status_code}: {r.text[:300]}")
+
+    data = r.json()
+    return data["choices"][0]["message"]["content"].strip()
+
+
+def _call_openrouter(prompt: str, max_tokens: int) -> str:
+    """Call any model via OpenRouter API (OpenAI-compatible endpoint)."""
+    import requests
+
+    from .config import load_config
+    api_key = get_openrouter_key()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY not set")
+
+    # Model: env > config.json > default (google/gemini-2.5-flash)
+    model = os.environ.get(
+        "OPENROUTER_MODEL",
+        load_config().get("OPENROUTER_MODEL", "google/gemini-2.5-flash"),
+    )
+
+    r = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=120,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"OpenRouter API {r.status_code}: {r.text[:300]}")
 
     data = r.json()
     return data["choices"][0]["message"]["content"].strip()
