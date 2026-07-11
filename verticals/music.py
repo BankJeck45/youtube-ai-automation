@@ -3,6 +3,7 @@
 import random
 from pathlib import Path
 
+from .config import run_cmd
 from .log import log
 
 # Music directory ships with the package
@@ -14,6 +15,42 @@ def _find_tracks() -> list[Path]:
     if not MUSIC_DIR.exists():
         return []
     return sorted(MUSIC_DIR.glob("*.mp3"))
+
+
+def _generate_ambient_bed(voiceover_path: Path, work_dir: Path) -> Path | None:
+    """Create a subtle generated ambient bed when no music assets are bundled."""
+    try:
+        from .assemble import get_audio_duration
+        duration = max(6.0, get_audio_duration(voiceover_path))
+    except Exception:
+        duration = 60.0
+
+    out = work_dir / "generated_dark_ambient.wav"
+    fade_out_start = max(0.0, duration - 3.0)
+    noise = f"anoisesrc=color=brown:amplitude=0.035:d={duration:.2f}:sample_rate=44100"
+    drone = f"sine=frequency=55:duration={duration:.2f}:sample_rate=44100"
+    filt = (
+        "[0:a]lowpass=f=850,volume=0.28[n];"
+        "[1:a]volume=0.10[s];"
+        f"[n][s]amix=inputs=2:duration=first,"
+        "afade=t=in:st=0:d=2,"
+        f"afade=t=out:st={fade_out_start:.2f}:d=3[a]"
+    )
+    try:
+        run_cmd([
+            "ffmpeg",
+            "-f", "lavfi", "-i", noise,
+            "-f", "lavfi", "-i", drone,
+            "-filter_complex", filt,
+            "-map", "[a]",
+            str(out),
+            "-y", "-loglevel", "quiet",
+        ])
+        log(f"Generated fallback ambient bed: {out.name}")
+        return out
+    except Exception as e:
+        log(f"Generated ambient bed failed: {e}")
+        return None
 
 
 def _get_speech_regions(audio_path: Path) -> list[tuple[float, float]]:
@@ -84,11 +121,14 @@ def select_and_prepare_music(
     """
     tracks = _find_tracks()
     if not tracks:
-        log("No music tracks found in music/ — skipping background music")
-        return {}
-
-    track = random.choice(tracks)
-    log(f"Selected music track: {track.name}")
+        log("No music tracks found in music/ — generating subtle ambient bed")
+        track = _generate_ambient_bed(voiceover_path, work_dir)
+        if not track:
+            log("Skipping background music")
+            return {}
+    else:
+        track = random.choice(tracks)
+        log(f"Selected music track: {track.name}")
 
     # Get speech regions for ducking
     speech_regions = _get_speech_regions(voiceover_path)

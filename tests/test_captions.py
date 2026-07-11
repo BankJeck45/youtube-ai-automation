@@ -7,6 +7,7 @@ from verticals.captions import (
     _format_ass_time,
     _generate_ass,
     _generate_srt,
+    _estimated_word_timestamps,
     _srt_time,
 )
 
@@ -107,6 +108,31 @@ class TestASSGeneration:
         dialogue_count = content.count("Dialogue:")
         # 3 groups * 4 words each = 12 dialogue lines
         assert dialogue_count == 12
+
+    def test_reference_style_single_line_per_group(self, sample_words, tmp_work_dir):
+        output = tmp_work_dir / "reference.ass"
+        _generate_ass(
+            sample_words,
+            output,
+            group_size=4,
+            font_size=48,
+            text_color="#D8D8D8",
+            highlight_words=False,
+            position="lower_left",
+            outline=2,
+            shadow=1,
+        )
+        content = output.read_text()
+        assert "Style: Default,Arial,48,&H00D8D8D8" in content
+        assert content.count("Dialogue:") == 3
+
+
+class TestEstimatedCaptions:
+    def test_estimates_word_timestamps_from_script(self):
+        words = _estimated_word_timestamps("The corridor whispers at midnight.", 6.0)
+        assert [w["word"] for w in words] == ["The", "corridor", "whispers", "at", "midnight"]
+        assert words[0]["start"] >= 0
+        assert words[-1]["end"] <= 6.0
 
 
 class TestSRTGeneration:

@@ -3,7 +3,9 @@
 import base64
 import hashlib
 from io import BytesIO
+import math
 import os
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -133,6 +135,65 @@ def _generate_image_pollinations(prompt: str, output_path: Path):
     _fit_to_portrait(img, output_path)
 
 
+def estimate_visual_count(duration: float, target_seconds: float = 4.5, min_count: int = 3, max_count: int = 24) -> int:
+    """Return a b-roll count that changes visuals about every 3-6 seconds."""
+    if duration <= 0:
+        return min_count
+    count = math.ceil(duration / max(target_seconds, 3.0))
+    return max(min_count, min(max_count, count))
+
+
+def _split_script_beats(script: str, target_count: int) -> list[str]:
+    """Split narration into roughly equal visual beats."""
+    cleaned = re.sub(r"\s+", " ", (script or "").strip())
+    if not cleaned:
+        return []
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", cleaned) if s.strip()]
+    if not sentences:
+        sentences = [cleaned]
+
+    if len(sentences) >= target_count:
+        return sentences[:target_count]
+
+    words = cleaned.split()
+    if not words:
+        return sentences
+
+    per_group = max(6, math.ceil(len(words) / max(target_count, 1)))
+    beats = []
+    for i in range(0, len(words), per_group):
+        beats.append(" ".join(words[i:i + per_group]))
+    return beats[:target_count]
+
+
+def build_timed_broll_prompts(
+    script: str,
+    base_prompts: list[str],
+    target_count: int,
+    prompt_suffix: str = "",
+) -> list[str]:
+    """Create narration-aligned image prompts for each 3-6 second segment."""
+    base = [str(p).strip() for p in (base_prompts or []) if str(p).strip()]
+    if not base:
+        base = ["cinematic scene matching the narration"]
+
+    beats = _split_script_beats(script, target_count)
+    prompts = []
+    for i in range(target_count):
+        beat = beats[i] if i < len(beats) else beats[-1] if beats else ""
+        anchor = base[i % len(base)]
+        parts = [
+            anchor,
+            f"narration beat {i + 1}: {beat}" if beat else "",
+            "show the scene described by this beat, no text, no subtitles, no logos, no UI words",
+            "thin atmospheric smoke or fog, subtle film grain, slow cinematic motion feel",
+            prompt_suffix,
+        ]
+        prompts.append(". ".join(p.strip().strip(".") for p in parts if p).strip() + ".")
+    return prompts
+
+
 def _fallback_frame(i: int, out_dir: Path, prompt: str = "") -> Path:
     """Text-free graphic fallback if all image providers fail."""
     seed = int(hashlib.sha256(f"{prompt}:{i}".encode()).hexdigest()[:8], 16)
@@ -225,12 +286,14 @@ def generate_broll(prompts: list, out_dir: Path) -> list[Path]:
             "are rejected with a 403 'unregistered callers' error)."
         )
     frames = []
-    selected_prompts = prompts[:3] or ["Cinematic visual scene"]
+    selected_prompts = [str(p) for p in prompts if str(p).strip()] or ["Cinematic visual scene"]
+
+    gemini_available = bool(api_key)
 
     for i, prompt in enumerate(selected_prompts):
         out_path = out_dir / f"broll_{i}.png"
 
-        if api_key:
+        if gemini_available:
             log(f"Generating b-roll frame {i+1}/{len(selected_prompts)} via Gemini Imagen...")
             try:
                 _generate_image_gemini(prompt, out_path, api_key)
@@ -239,6 +302,9 @@ def generate_broll(prompts: list, out_dir: Path) -> list[Path]:
                 continue
             except Exception as e:
                 log(f"Gemini frame {i+1} failed: {e} — trying Pollinations fallback")
+                if "429" in str(e) or "quota" in str(e).lower():
+                    gemini_available = False
+                    log("Gemini quota/rate limit detected — using Pollinations for remaining b-roll frames")
 
         try:
             log(f"Generating b-roll frame {i+1}/{len(selected_prompts)} via Pollinations fallback...")

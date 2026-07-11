@@ -10,6 +10,8 @@ from verticals.broll import (
     _extract_image_bytes,
     _fallback_frame,
     _generate_image_pollinations,
+    build_timed_broll_prompts,
+    estimate_visual_count,
 )
 
 
@@ -63,3 +65,22 @@ def test_pollinations_fallback_saves_portrait_image(monkeypatch, tmp_path):
 
     img = Image.open(out).convert("RGB")
     assert img.size == (VIDEO_WIDTH, VIDEO_HEIGHT)
+
+
+def test_estimates_visual_count_every_few_seconds():
+    assert estimate_visual_count(64) == 15
+    assert estimate_visual_count(10) == 3
+
+
+def test_builds_timed_prompts_from_script_beats():
+    prompts = build_timed_broll_prompts(
+        "A corridor appears at midnight. The whisper gets louder. Then the lights go out.",
+        ["dark hallway"],
+        3,
+        "horror documentary style",
+    )
+
+    assert len(prompts) == 3
+    assert "corridor appears" in prompts[0]
+    assert "no text" in prompts[0]
+    assert "horror documentary style" in prompts[0]

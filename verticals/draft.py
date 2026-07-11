@@ -103,11 +103,13 @@ RULES:
 - Use one of the CTA OPTIONS at the end
 - Never use any of the NEVER USE phrases
 - B-roll prompts must follow the visual guidance (style, mood, preferred subjects)
+- Create 10 to 16 b-roll prompts, one for each 3-6 second narration beat
+- Every b-roll prompt must describe a concrete visual moment from the script, not generic background mood
 
 Output JSON exactly:
 {{
   "script": "...",
-  "broll_prompts": ["prompt for frame 1", "prompt for frame 2", "prompt for frame 3"],
+  "broll_prompts": ["prompt for beat 1", "prompt for beat 2", "prompt for beat 3", "..."],
   "youtube_title": "...",
   "youtube_description": "...",
   "youtube_tags": "tag1,tag2,tag3",
@@ -149,7 +151,7 @@ Output JSON exactly:
         if not isinstance(draft["broll_prompts"], list):
             draft["broll_prompts"] = ["Cinematic landscape"] * 3
         else:
-            draft["broll_prompts"] = [str(p) for p in draft["broll_prompts"][:3]]
+            draft["broll_prompts"] = [str(p) for p in draft["broll_prompts"][:16]]
 
     # Append visual prompt suffix to b-roll prompts
     suffix = get_visual_prompt_suffix(profile)

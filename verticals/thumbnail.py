@@ -1,13 +1,17 @@
 """Thumbnail generation — Gemini Imagen (16:9) + Pillow text overlay."""
 
 import base64
+import hashlib
+from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
 from .config import get_gemini_key
 from .log import log
+from .niche import get_thumbnail_config, load_niche
 from .retry import with_retry
 
 THUMB_WIDTH = 1280
@@ -52,50 +56,110 @@ def _generate_thumb_image(prompt: str, output_path: Path, api_key: str):
     raise RuntimeError("No image in Gemini response")
 
 
-def _overlay_title(image_path: Path, title: str, output_path: Path):
-    """Overlay bold title text with drop shadow on the thumbnail."""
-    img = Image.open(image_path).convert("RGB")
-    img = img.resize((THUMB_WIDTH, THUMB_HEIGHT), Image.LANCZOS)
-    draw = ImageDraw.Draw(img)
+@with_retry(max_retries=1, base_delay=2.0)
+def _generate_thumb_pollinations(prompt: str, output_path: Path):
+    """Generate a 16:9 thumbnail base image through a no-key fallback."""
+    seed = int(hashlib.sha256(prompt.encode()).hexdigest()[:8], 16)
+    image_prompt = (
+        f"{prompt}. 16:9 YouTube thumbnail, dark cinematic scene, high contrast, "
+        "no text, no logo, no watermark, dramatic lighting."
+    )
+    url = f"https://image.pollinations.ai/prompt/{quote(image_prompt, safe='')}"
+    params = {
+        "width": "1280",
+        "height": "720",
+        "nologo": "true",
+        "private": "true",
+        "seed": str(seed),
+    }
+    r = requests.get(url, params=params, timeout=150, headers={"Accept": "image/*"})
+    content_type = r.headers.get("Content-Type", "")
+    if r.status_code != 200 or not content_type.startswith("image/"):
+        detail = r.text[:200] if getattr(r, "text", "") else content_type
+        raise RuntimeError(f"Pollinations thumbnail {r.status_code}: {detail}")
 
-    # Try to find a bold font, fall back to default
-    font_size = 64
-    font = None
-    for font_name in [
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/SFNSDisplay.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]:
+    img = Image.open(BytesIO(r.content)).convert("RGB")
+    img = img.resize((THUMB_WIDTH, THUMB_HEIGHT), Image.LANCZOS)
+    img.save(output_path)
+
+
+def _fit_thumb_background(image_path: Path) -> Image.Image:
+    img = Image.open(image_path).convert("RGB")
+    orig_w, orig_h = img.size
+    scale = max(THUMB_WIDTH / orig_w, THUMB_HEIGHT / orig_h)
+    new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left = (new_w - THUMB_WIDTH) // 2
+    top = (new_h - THUMB_HEIGHT) // 2
+    return img.crop((left, top, left + THUMB_WIDTH, top + THUMB_HEIGHT))
+
+
+def _short_thumbnail_text(title: str, max_words: int) -> str:
+    words = [w.strip(".,:;!?\"'()[]").upper() for w in title.split()]
+    words = [w for w in words if w]
+    return " ".join(words[:max_words]) or "WATCH THIS"
+
+
+def _load_title_font(size: int, style: str = ""):
+    serif = "serif" in (style or "").lower()
+    names = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf" if serif else "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf" if serif else "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Georgia Bold.ttf" if serif else "/Library/Fonts/Arial Bold.ttf",
+    ]
+    for name in names:
         try:
-            font = ImageFont.truetype(font_name, font_size)
-            break
+            return ImageFont.truetype(name, size)
         except (OSError, IOError):
             continue
-    if font is None:
-        font = ImageFont.load_default()
+    return ImageFont.load_default()
+
+
+def _overlay_vignette(img: Image.Image) -> Image.Image:
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay, "RGBA")
+    draw.rectangle((0, 0, THUMB_WIDTH, 210), fill=(0, 0, 0, 130))
+    draw.rectangle((0, 0, 260, THUMB_HEIGHT), fill=(0, 0, 0, 95))
+    draw.rectangle((THUMB_WIDTH - 260, 0, THUMB_WIDTH, THUMB_HEIGHT), fill=(0, 0, 0, 105))
+    draw.rectangle((0, THUMB_HEIGHT - 170, THUMB_WIDTH, THUMB_HEIGHT), fill=(0, 0, 0, 100))
+    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+
+
+def _overlay_title(image_path: Path, title: str, output_path: Path, config: dict | None = None):
+    """Overlay bold title text with the dark archive reference style."""
+    config = config or {}
+    img = _overlay_vignette(_fit_thumb_background(image_path))
+    draw = ImageDraw.Draw(img)
+
+    max_words = int(config.get("max_words", 6))
+    title_text = _short_thumbnail_text(title, max_words)
+    text_color = config.get("text_color", "#F3E8C8")
+    rgb = tuple(int(text_color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)) if text_color.startswith("#") and len(text_color) == 7 else (243, 232, 200)
 
     # Word wrap the title
-    max_width = THUMB_WIDTH - 80  # 40px padding each side
-    lines = _wrap_text(draw, title, font, max_width)
+    font_size = int(config.get("font_size", 68))
+    font = _load_title_font(font_size, config.get("font_style", "bold serif"))
+    max_width = int(THUMB_WIDTH * 0.56)
+    lines = _wrap_text(draw, title_text, font, max_width)
+    while len(lines) > 4 and font_size > 42:
+        font_size -= 6
+        font = _load_title_font(font_size, config.get("font_style", "bold serif"))
+        lines = _wrap_text(draw, title_text, font, max_width)
     text_block = "\n".join(lines)
 
-    # Calculate position (center, lower third)
     bbox = draw.multiline_textbbox((0, 0), text_block, font=font)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
     x = (THUMB_WIDTH - text_w) // 2
-    y = THUMB_HEIGHT - text_h - 60  # 60px from bottom
+    y = int(config.get("text_top", 44))
 
-    # Drop shadow
-    shadow_offset = 3
+    shadow_offset = 4
     draw.multiline_text(
         (x + shadow_offset, y + shadow_offset),
-        text_block, fill=(0, 0, 0), font=font, align="center",
+        text_block, fill=(0, 0, 0), font=font, align="center", spacing=0,
     )
-
-    # Main text
     draw.multiline_text(
-        (x, y), text_block, fill=(255, 255, 255), font=font, align="center",
+        (x, y), text_block, fill=rgb, font=font, align="center", spacing=0,
     )
 
     img.save(output_path)
@@ -127,25 +191,28 @@ def generate_thumbnail(draft: dict, out_dir: Path) -> Path:
     Returns path to the final thumbnail PNG.
     """
     api_key = get_gemini_key()
-    if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY not set — cannot generate thumbnail. Get an "
-            "AI Studio key at https://aistudio.google.com/apikey (Vertex AI / "
-            "service-account credentials are rejected with a 403 "
-            "'unregistered callers' error)."
-        )
     prompt = draft.get("thumbnail_prompt", "Cinematic YouTube thumbnail")
     title = draft.get("youtube_title", draft.get("news", ""))
     job_id = draft.get("job_id", "unknown")
+    profile = load_niche(draft.get("niche", "general"))
+    thumb_config = get_thumbnail_config(profile)
 
     raw_path = out_dir / f"thumb_raw_{job_id}.png"
     final_path = out_dir / f"thumb_{job_id}.png"
 
-    log("Generating thumbnail via Gemini Imagen...")
-    _generate_thumb_image(prompt, raw_path, api_key)
+    if api_key:
+        try:
+            log("Generating thumbnail via Gemini Imagen...")
+            _generate_thumb_image(prompt, raw_path, api_key)
+        except Exception as e:
+            log(f"Gemini thumbnail failed: {e} — trying no-key visual fallback")
+            _generate_thumb_pollinations(prompt, raw_path)
+    else:
+        log("GEMINI_API_KEY not set — generating thumbnail via no-key visual fallback")
+        _generate_thumb_pollinations(prompt, raw_path)
 
     log("Adding title overlay...")
-    _overlay_title(raw_path, title, final_path)
+    _overlay_title(raw_path, title, final_path, thumb_config)
 
     log(f"Thumbnail saved: {final_path.name}")
     return final_path

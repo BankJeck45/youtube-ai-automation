@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from verticals.config import _get_key, extract_keywords, load_config
+from verticals.niche import get_voice_config
 
 
 class TestGetKey:
@@ -58,3 +59,22 @@ class TestLoadConfig:
         mock_path.exists.return_value = True
         mock_path.read_text.return_value = "not json"
         assert load_config() == {}
+
+
+class TestNicheVoiceConfig:
+    def test_edge_provider_alias_reads_edge_tts_settings(self):
+        profile = {
+            "voice": {
+                "suggested_voices": {
+                    "edge_tts": {
+                        "en": "en-US-GuyNeural",
+                        "settings": {"rate": "-10%", "pitch": "-5Hz"},
+                    }
+                }
+            }
+        }
+
+        config = get_voice_config(profile, provider="edge", lang="en")
+
+        assert config["voice_id"] == "en-US-GuyNeural"
+        assert config["settings"]["rate"] == "-10%"

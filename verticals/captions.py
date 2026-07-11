@@ -1,6 +1,7 @@
 """Whisper word-level timestamps + ASS subtitle generation + Pillow fallback."""
 
 from pathlib import Path
+import re
 
 from .log import log
 
@@ -57,6 +58,39 @@ def _group_words(words: list[dict], group_size: int = 4) -> list[list[dict]]:
     return groups
 
 
+def _hex_to_ass_color(color: str, default: str = "&HFFFFFF&", alpha: str = "") -> str:
+    """Convert #RRGGBB to ASS BGR color."""
+    value = (color or "").lstrip("#")
+    if len(value) != 6:
+        return default
+    return f"&H{alpha}{value[4:6]}{value[2:4]}{value[0:2]}&"
+
+
+def _escape_ass_text(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+
+
+def _estimated_word_timestamps(script_text: str, duration: float) -> list[dict]:
+    """Estimate word timings from script text when Whisper is unavailable."""
+    tokens = re.findall(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?|[^\s]", script_text or "")
+    words = [t for t in tokens if re.search(r"[A-Za-z0-9]", t)]
+    if not words or duration <= 0:
+        return []
+
+    usable_duration = max(1.0, duration - 0.6)
+    weights = [max(1.0, min(8.0, len(w) / 3)) for w in words]
+    total = sum(weights)
+    t = 0.3
+    result = []
+    for word, weight in zip(words, weights):
+        span = max(0.18, usable_duration * (weight / total))
+        start = t
+        end = min(duration, start + span)
+        result.append({"word": word, "start": start, "end": end})
+        t = end
+    return result
+
+
 def _format_ass_time(seconds: float) -> str:
     """Format seconds to ASS timestamp: H:MM:SS.cc (centiseconds)."""
     h = int(seconds // 3600)
@@ -72,9 +106,14 @@ def _generate_ass(
     video_width: int = 1080,
     video_height: int = 1920,
     highlight_color: str = "#FFFF00",
+    text_color: str = "#FFFFFF",
     group_size: int = 4,
     font_family: str = "Arial",
     font_size: int = 72,
+    highlight_words: bool = True,
+    position: str = "lower_third",
+    outline: int = 3,
+    shadow: int = 0,
 ):
     """Generate ASS subtitle file with word-by-word color highlighting.
 
@@ -86,7 +125,12 @@ def _generate_ass(
     correctly. The default "Arial" preserves the original behavior for English.
     """
     # ASS header
-    margin_v = int(video_height * 0.25)  # ~75% down from top = 25% from bottom
+    position_key = (position or "").lower()
+    alignment = 1 if position_key in {"lower_left", "left_lower", "reference"} else 2
+    margin_l = 72 if alignment == 1 else 40
+    margin_r = 72 if alignment == 1 else 40
+    margin_v = int(video_height * (0.14 if alignment == 1 else 0.25))
+    primary_color = _hex_to_ass_color(text_color, "&H00FFFFFF&", alpha="00")
     header = f"""[Script Info]
 Title: Pipeline Captions
 ScriptType: v4.00+
@@ -96,7 +140,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_family},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,3,0,2,40,40,{margin_v},1
+Style: Default,{font_family},{font_size},{primary_color},&H000000FF,&H00000000,&H70000000,-1,0,0,0,100,100,0,0,1,{outline},{shadow},{alignment},{margin_l},{margin_r},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -119,6 +163,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         group_start = group[0]["start"]
         group_end = group[-1]["end"]
+        if not highlight_words:
+            text = " ".join(_escape_ass_text(w["word"]) for w in group)
+            events.append(
+                f"Dialogue: 0,{_format_ass_time(group_start)},{_format_ass_time(group_end)},Default,,0,0,0,,{text}"
+            )
+            continue
 
         # For each word in the group being active, emit one dialogue line
         for active_idx, active_word in enumerate(group):
@@ -129,9 +179,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             parts = []
             for j, w in enumerate(group):
                 if j == active_idx:
-                    parts.append(f"{{\\c{ass_highlight}\\b1\\fs80}}{w['word']}{{\\r}}")
+                    parts.append(f"{{\\c{ass_highlight}\\b1\\fs{font_size + 8}}}{_escape_ass_text(w['word'])}{{\\r}}")
                 else:
-                    parts.append(w["word"])
+                    parts.append(_escape_ass_text(w["word"]))
 
             text = " ".join(parts)
             events.append(
@@ -181,6 +231,13 @@ def generate_captions(
     words_per_group: int = 4,
     font_family: str = "Arial",
     font_size: int = 72,
+    script_text: str = "",
+    audio_duration: float = 0.0,
+    text_color: str = "#FFFFFF",
+    highlight_words: bool = True,
+    position: str = "lower_third",
+    outline: int = 3,
+    shadow: int = 0,
 ) -> dict:
     """Generate captions: ASS (for burn-in) + SRT (for YouTube upload).
 
@@ -195,6 +252,9 @@ def generate_captions(
     Returns dict with keys: srt_path, ass_path, words (for music ducking).
     """
     words = _whisper_word_timestamps(audio_path, lang)
+    if not words and script_text:
+        log("No Whisper word timestamps — estimating captions from script + audio duration")
+        words = _estimated_word_timestamps(script_text, audio_duration)
 
     result = {"words": words}
 
@@ -230,9 +290,14 @@ def generate_captions(
     _generate_ass(
         words, ass_path,
         highlight_color=highlight_color,
+        text_color=text_color,
         group_size=words_per_group,
         font_family=font_family,
         font_size=font_size,
+        highlight_words=highlight_words,
+        position=position,
+        outline=outline,
+        shadow=shadow,
     )
     result["ass_path"] = str(ass_path)
 

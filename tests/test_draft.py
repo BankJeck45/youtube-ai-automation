@@ -75,15 +75,15 @@ class TestGenerateDraft:
 
     @patch("verticals.draft.research_topic")
     @patch("verticals.draft._call_claude")
-    def test_truncates_broll_prompts(self, mock_claude, mock_research):
+    def test_keeps_multi_beat_broll_prompts(self, mock_claude, mock_research):
         mock_research.return_value = "research"
         mock_claude.return_value = json.dumps({
             "script": "s",
-            "broll_prompts": ["p1", "p2", "p3", "p4", "p5"],  # too many
+            "broll_prompts": ["p1", "p2", "p3", "p4", "p5"],
             "youtube_title": "T", "youtube_description": "D",
             "youtube_tags": "t", "instagram_caption": "C",
             "thumbnail_prompt": "P",
         })
 
         draft = generate_draft("Test")
-        assert len(draft["broll_prompts"]) == 3  # truncated to 3
+        assert len(draft["broll_prompts"]) == 5

@@ -1,0 +1,117 @@
+name: conspiracy
+display_name: "Conspiracy & Hidden Files"
+description: "For secret programs, cover-up theories, strange history, and evidence-led mystery explainers."
+
+script:
+  tone: "suspenseful, skeptical, evidence-led, never reckless"
+  pacing: "hook fast, then controlled reveal beats with strong curiosity gaps"
+  perspective: "investigative narrator separating documented facts from speculation"
+  word_count: "140 to 165"
+  sentence_style: "short direct sentences, each beat reveals one new clue"
+  hooks:
+    - id: hidden_file
+      template: "This document about {topic} was public for years. Almost nobody read the last page."
+      when: "document, archive, leaked memo, public record"
+    - id: official_story
+      template: "The official story of {topic} has one problem nobody can explain."
+      when: "contradiction between official account and detail"
+    - id: timeline_gap
+      template: "There is a missing hour in the {topic} timeline, and it changes everything."
+      when: "timeline, event, incident, disappearance"
+    - id: follow_the_money
+      template: "To understand {topic}, ignore the headline and follow the money."
+      when: "business, government, finance, power structure"
+  cta_variants:
+    - "Follow for more hidden-file breakdowns."
+    - "The next file makes this even stranger."
+    - "Save this timeline before it gets buried."
+  forbidden_phrases:
+    - "like and subscribe"
+    - "smash that bell"
+    - "wake up sheeple"
+    - "they don't want you to know"
+    - "100 percent proof"
+  structure:
+    opening: "Start with the contradiction or hidden file in the first 3 seconds."
+    middle: "Move through 4 to 6 clues: official claim, mismatch, document detail, motive, consequence."
+    closing: "Separate what is confirmed from what remains unexplained, then CTA."
+
+visuals:
+  style: "dark investigative archive, classified files, red string boards, dim offices, grainy evidence"
+  mood: "tense, secretive, cinematic, credible"
+  segment_seconds: 4.5
+  max_segments: 22
+  color_palette: ["#050505", "#101820", "#B91C1C", "#D6C7A1", "#4B5563"]
+  subjects:
+    prefer:
+      - "classified document close up under a desk lamp"
+      - "red string evidence board in a dark room"
+      - "grainy surveillance monitor"
+      - "unmarked folder on a metal table"
+      - "shadowy government hallway"
+      - "old newspaper clippings in low light"
+      - "map with pins and handwritten notes"
+    avoid:
+      - "cartoon conspiracy imagery"
+      - "bright office stock photo"
+      - "text in image"
+      - "logos"
+      - "politician caricatures"
+  prompt_suffix: "photorealistic investigative documentary frame, thin smoke haze, subtle film grain, low-key lighting, red accent, no text, no subtitles"
+
+voice:
+  pace: "measured, approximately 135 to 145 words per minute"
+  energy: "serious, controlled, investigative"
+  style: "dark investigative documentary narrator"
+  suggested_voices:
+    edge_tts:
+      en: "en-US-GuyNeural"
+      settings:
+        rate: "-10%"
+        pitch: "-5Hz"
+    elevenlabs:
+      voice_id: "JBFqnCBsd6RMkjVDRZzb"
+      settings:
+        stability: 0.62
+        similarity_boost: 0.85
+        style: 0.25
+
+captions:
+  highlight_color: "#D6C7A1"
+  text_color: "#E5E5E5"
+  font_family: "Arial"
+  font_size: 50
+  font_weight: "bold"
+  position: "lower_left"
+  words_per_group: 9
+  highlight_words: false
+  outline: 2
+  shadow: 1
+
+music:
+  mood: "dark investigative pulse, low drone, no lyrics"
+  energy: "low to medium"
+  tags: ["dark", "investigative", "ambient", "pulse", "tension"]
+  duck_volume_speech: 0.08
+  duck_volume_gap: 0.20
+
+thumbnail:
+  style: "dark evidence board or classified folder, cream serif title, red accent"
+  text_color: "#F3E8C8"
+  accent_color: "#B91C1C"
+  text_position: "top_center"
+  max_words: 6
+  font_size: 64
+  font_style: "bold serif"
+  text_top: 44
+  guidelines:
+    - "Use one file, map, or corridor as the dominant visual"
+    - "Use cream serif text at top center"
+    - "Keep one red accent only"
+
+discovery:
+  reddit:
+    subreddits: ["HighStrangeness", "UnresolvedMysteries", "todayilearned"]
+  rss:
+    feeds:
+      - "https://hnrss.org/frontpage"

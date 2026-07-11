@@ -1,0 +1,117 @@
+name: horror
+display_name: "Horror & Dark Archive"
+description: "For eerie mystery shorts, haunted places, cursed objects, and atmospheric horror stories."
+
+script:
+  tone: "ominous, cinematic, restrained, unsettling, story-first"
+  pacing: "slow hook, steady escalation, short sentences with room for dread"
+  perspective: "documentary narrator telling a disturbing account as if it was archived evidence"
+  word_count: "130 to 155"
+  sentence_style: "short cinematic lines, no jokes, no casual creator slang"
+  hooks:
+    - id: haunted_place
+      template: "Locals say {topic} only appears when someone is already lost."
+      when: "haunted place, strange location, corridor, room, road, or building"
+    - id: forbidden_audio
+      template: "The first person who heard {topic} thought it was a prank. Then it answered back."
+      when: "voice, tape, call, recording, or sound-led story"
+    - id: archive_warning
+      template: "This file was never supposed to be opened."
+      when: "archive, lost media, footage, diary, or recovered evidence"
+    - id: final_detail
+      template: "The scariest part of {topic} is not what happened. It's the one detail nobody can explain."
+      when: "mystery with one key reveal"
+  cta_variants:
+    - "Follow for more dark archive cases."
+    - "Part two is already in the archive."
+    - "Save this before it disappears."
+  forbidden_phrases:
+    - "like and subscribe"
+    - "smash that bell"
+    - "what's up guys"
+    - "you won't believe"
+    - "this is insane"
+  structure:
+    opening: "Start with a place, a rule, or a warning in the first 3 seconds."
+    middle: "Escalate through 4 to 6 eerie facts, each one changing what the viewer thinks is happening."
+    closing: "End on a chilling explanation or unresolved detail, then a quiet CTA."
+
+visuals:
+  style: "dark archive horror, narrow corridors, low-key lighting, realistic cinematic stills"
+  mood: "ominous, haunted, foggy, abandoned, claustrophobic"
+  segment_seconds: 4.5
+  max_segments: 22
+  color_palette: ["#030303", "#0B0D10", "#1F2933", "#CDBF9B", "#6B0F0F"]
+  subjects:
+    prefer:
+      - "endless dark corridor with one dim ceiling lamp"
+      - "abandoned hallway with wet brick walls"
+      - "shadowy doorway at the end of a passage"
+      - "old audio recorder on a dusty table"
+      - "grainy archive photograph in darkness"
+      - "fog drifting through a narrow room"
+      - "silhouette barely visible in a doorway"
+    avoid:
+      - "cartoon monsters"
+      - "gore"
+      - "bright colors"
+      - "text in image"
+      - "obvious jump scare face"
+  prompt_suffix: "photorealistic dark horror documentary frame, thin drifting smoke, subtle film grain, desaturated, dim practical lights, no text, no subtitles"
+
+voice:
+  pace: "slow, approximately 125 to 135 words per minute"
+  energy: "low, controlled, intimate, suspenseful"
+  style: "dark documentary narrator, calm but unsettling"
+  suggested_voices:
+    edge_tts:
+      en: "en-US-GuyNeural"
+      settings:
+        rate: "-14%"
+        pitch: "-8Hz"
+    elevenlabs:
+      voice_id: "JBFqnCBsd6RMkjVDRZzb"
+      settings:
+        stability: 0.72
+        similarity_boost: 0.85
+        style: 0.2
+
+captions:
+  highlight_color: "#CDBF9B"
+  text_color: "#D8D8D8"
+  font_family: "Arial"
+  font_size: 48
+  font_weight: "bold"
+  position: "lower_left"
+  words_per_group: 9
+  highlight_words: false
+  outline: 2
+  shadow: 1
+
+music:
+  mood: "dark ambient, low drone, thin tension, no lyrics"
+  energy: "low"
+  tags: ["dark", "ambient", "horror", "drone", "tension"]
+  duck_volume_speech: 0.07
+  duck_volume_gap: 0.18
+
+thumbnail:
+  style: "dark corridor, serif cream text, archive horror, one strong location image"
+  text_color: "#F3E8C8"
+  accent_color: "#8B0000"
+  text_position: "top_center"
+  max_words: 6
+  font_size: 66
+  font_style: "bold serif"
+  text_top: 42
+  guidelines:
+    - "Use a dark corridor or single ominous location as the dominant visual"
+    - "Use cream serif text at the top, centered"
+    - "Keep the bottom mostly visual and shadowy"
+
+discovery:
+  reddit:
+    subreddits: ["nosleep", "creepypasta", "Paranormal", "Glitch_in_the_Matrix"]
+  rss:
+    feeds:
+      - "https://hnrss.org/frontpage"

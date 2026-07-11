@@ -160,6 +160,7 @@ def get_voice_config(profile: dict, provider: str = "edge_tts", lang: str = "en"
     """Get voice configuration for the specified provider and language."""
     voice = profile.get("voice", {})
     suggested = voice.get("suggested_voices", {})
+    provider_key = "edge_tts" if provider == "edge" else provider
 
     config = {
         "pace": voice.get("pace", ""),
@@ -167,12 +168,14 @@ def get_voice_config(profile: dict, provider: str = "edge_tts", lang: str = "en"
         "style": voice.get("style", ""),
     }
 
-    provider_voices = suggested.get(provider, {})
+    provider_voices = suggested.get(provider_key, {})
     if isinstance(provider_voices, dict):
         config["voice_id"] = provider_voices.get(lang, provider_voices.get("en", ""))
+        if provider_key == "edge_tts":
+            config["settings"] = provider_voices.get("settings", {})
         # Providers that ship a single voice_id + a settings dict (rather than
         # one voice_id per language) — ElevenLabs and 60db follow this shape.
-        if provider in ("elevenlabs", "60db"):
+        if provider_key in ("elevenlabs", "60db"):
             config["voice_id"] = provider_voices.get("voice_id", "")
             config["settings"] = provider_voices.get("settings", {})
     elif isinstance(provider_voices, str):

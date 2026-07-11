@@ -66,12 +66,19 @@ def cmd_draft(args):
 
 
 def cmd_produce(args):
-    from .broll import generate_broll
+    from .broll import build_timed_broll_prompts, estimate_visual_count, generate_broll
     from .tts import generate_voiceover
     from .captions import generate_captions
     from .music import select_and_prepare_music
-    from .assemble import assemble_video
-    from .niche import load_niche, get_voice_config, get_caption_config, get_music_config
+    from .assemble import assemble_video, get_audio_duration
+    from .thumbnail import generate_thumbnail
+    from .niche import (
+        load_niche,
+        get_voice_config,
+        get_caption_config,
+        get_music_config,
+        get_visual_prompt_suffix,
+    )
     from .state import PipelineState
     import json
     import shutil
@@ -98,14 +105,6 @@ def cmd_produce(args):
 
     print(f"\n  Producing {lang.upper()} video for job {job_id} [niche: {niche_name}]")
 
-    # B-roll
-    if force or not state.is_done("broll"):
-        frames = generate_broll(draft.get("broll_prompts", ["Cinematic landscape"] * 3), work_dir)
-        state.complete_stage("broll", {"frames": [str(f) for f in frames]})
-    else:
-        log("Skipping b-roll (already done)")
-        frames = [Path(f) for f in state.get_artifact("broll", "frames", [])]
-
     # Voiceover (niche-aware voice selection)
     if force or not state.is_done("voiceover"):
         voice_config = get_voice_config(
@@ -123,6 +122,36 @@ def cmd_produce(args):
         log("Skipping voiceover (already done)")
         vo_path = Path(state.get_artifact("voiceover", "path"))
 
+    try:
+        voiceover_duration = get_audio_duration(vo_path)
+    except Exception as e:
+        log(f"Could not read voiceover duration: {e} — estimating from script length")
+        voiceover_duration = max(12.0, len(script.split()) / 2.5)
+
+    # B-roll: one visual every ~3-6 seconds, aligned to narration beats.
+    if force or not state.is_done("broll"):
+        visual_cfg = profile.get("visuals", {})
+        target_seconds = float(visual_cfg.get("segment_seconds", 4.5))
+        max_visuals = int(visual_cfg.get("max_segments", 24))
+        visual_count = estimate_visual_count(
+            voiceover_duration,
+            target_seconds=target_seconds,
+            max_count=max_visuals,
+        )
+        timed_prompts = build_timed_broll_prompts(
+            script,
+            draft.get("broll_prompts", ["Cinematic landscape"]),
+            visual_count,
+            get_visual_prompt_suffix(profile),
+        )
+        draft["broll_prompts_timed"] = timed_prompts
+        log(f"Generating {visual_count} narration-aligned b-roll frames (~{target_seconds:.1f}s each)...")
+        frames = generate_broll(timed_prompts, work_dir)
+        state.complete_stage("broll", {"frames": [str(f) for f in frames], "prompts": timed_prompts})
+    else:
+        log("Skipping b-roll (already done)")
+        frames = [Path(f) for f in state.get_artifact("broll", "frames", [])]
+
     # Whisper + Captions (niche-aware styling)
     caption_config = get_caption_config(profile)
     if force or not state.is_done("captions"):
@@ -132,6 +161,13 @@ def cmd_produce(args):
             words_per_group=caption_config.get("words_per_group", 4),
             font_family=caption_config.get("font_family", "Arial"),
             font_size=int(caption_config.get("font_size", 72)),
+            script_text=script,
+            audio_duration=voiceover_duration,
+            text_color=caption_config.get("text_color", "#FFFFFF"),
+            highlight_words=bool(caption_config.get("highlight_words", True)),
+            position=caption_config.get("position", "lower_third"),
+            outline=int(caption_config.get("outline", 3)),
+            shadow=int(caption_config.get("shadow", 0)),
         )
         state.complete_stage("captions", {
             "srt_path": str(captions_result.get("srt_path", "")),
@@ -188,6 +224,19 @@ def cmd_produce(args):
         draft[f"srt_{lang}"] = str(final_srt)
 
     draft[f"video_{lang}"] = str(video_path)
+
+    if force or not state.is_done("thumbnail"):
+        try:
+            thumb_path = generate_thumbnail(draft, MEDIA_DIR)
+            draft["thumbnail"] = str(thumb_path)
+            state.complete_stage("thumbnail", {"path": str(thumb_path)})
+        except Exception as e:
+            log(f"Thumbnail generation failed: {e}")
+    else:
+        thumb_path = state.get_artifact("thumbnail", "path", "")
+        if thumb_path:
+            draft["thumbnail"] = thumb_path
+
     state.save(draft_path)
 
     print(f"\n  Video: {video_path}")

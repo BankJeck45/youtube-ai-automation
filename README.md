@@ -32,7 +32,7 @@ Implemented today:
 
 - research with DuckDuckGo plus optional source scraping
 - script and metadata generation through Claude, Gemini, GPT, Ollama, MiniMax, LiteLLM, or Claude CLI
-- b roll and thumbnail image generation through Gemini Imagen, with fallback frames
+- b roll and thumbnail image generation through Gemini Imagen, with no-key visual fallback frames
 - voiceover through Edge TTS, ElevenLabs, MiniMax, 60db, or macOS `say`
 - Whisper captions with ASS burn-in plus SRT export, niche-configurable fonts
 - ffmpeg assembly with Ken Burns motion, background music, and voice ducking
@@ -65,7 +65,7 @@ Not shipped yet: Gradio UI, Docker, Colab, TikTok/Reels/X upload, Pexels, Replic
 
 **Script** — An LLM (your choice of provider) writes a 60 to 90 second voiceover script using the niche profile's tone, pacing rules, and hook patterns. The profile tells the LLM things like "open with a question, not a statement" for tech niches or "open with a shocking statistic" for finance niches. Output includes the script, b roll image prompts, thumbnail prompt, and platform metadata for YouTube/TikTok/Instagram/X.
 
-**Visuals** — Generates 3 b roll frames via Gemini Imagen, then auto crops them to 9:16 portrait. If image generation fails, the pipeline uses simple fallback frames so assembly can still complete. The niche profile shapes the visual vocabulary: a fitness niche generates gym and movement imagery, a science niche generates diagrams and lab visuals.
+**Visuals** — Generates 3 b roll frames via Gemini Imagen, then auto crops them to 9:16 portrait. If Gemini is missing or fails, the pipeline tries a no-key image fallback before using a text-free graphic fallback so assembly can still complete. The niche profile shapes the visual vocabulary: a fitness niche generates gym and movement imagery, a science niche generates diagrams and lab visuals.
 
 **Voice** — Text to speech via your configured provider: Edge TTS (free, cross platform, 300+ voices, **recommended default**), ElevenLabs (premium, most natural), or macOS `say` (fallback). The niche profile suggests voice characteristics (pace, energy, tone) but the final voice selection is yours.
 
@@ -228,7 +228,7 @@ The `claude` provider works with any one of these, checked in order:
 | Provider | Cost | Setup | Notes |
 |----------|------|-------|-------|
 | **Gemini Imagen** | Free tier available | `GEMINI_API_KEY` | Default image provider. |
-| **Fallback frames** | Free | None | Solid-color fallback frames if image generation fails. |
+| **No-key image fallback** | Free | None | Generates visual b-roll when Gemini is missing or fails; final fallback is text-free graphic motion frames. |
 
 ### Upload
 

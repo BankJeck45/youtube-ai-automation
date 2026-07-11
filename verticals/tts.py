@@ -42,21 +42,30 @@ EDGE_VOICES = {
 }
 
 
-async def _edge_tts_generate(text: str, voice: str, output_path: Path):
+async def _edge_tts_generate(text: str, voice: str, output_path: Path, rate: str = "+0%", pitch: str = "+0Hz"):
     """Generate audio via edge-tts (async)."""
     import edge_tts
-    communicate = edge_tts.Communicate(text, voice)
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
     await communicate.save(str(output_path))
 
 
-def _generate_edge_tts(script: str, out_dir: Path, lang: str, voice_override: str = "") -> Path:
+def _generate_edge_tts(
+    script: str,
+    out_dir: Path,
+    lang: str,
+    voice_override: str = "",
+    settings: dict | None = None,
+) -> Path:
     """Generate voiceover via Edge TTS (free Microsoft voices)."""
     import asyncio
 
+    settings = settings or {}
     voice = voice_override or EDGE_VOICES.get(lang[:2], EDGE_VOICES["en"])
+    rate = settings.get("rate", "+0%")
+    pitch = settings.get("pitch", "+0Hz")
     out_path = out_dir / f"voiceover_{lang}.mp3"
 
-    log(f"Generating {lang} voiceover via Edge TTS (voice: {voice})...")
+    log(f"Generating {lang} voiceover via Edge TTS (voice: {voice}, rate: {rate}, pitch: {pitch})...")
 
     try:
         # Handle event loop — works whether called from sync or async context
@@ -67,12 +76,12 @@ def _generate_edge_tts(script: str, out_dir: Path, lang: str, voice_override: st
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(
                     asyncio.run,
-                    _edge_tts_generate(script, voice, out_path)
+                    _edge_tts_generate(script, voice, out_path, rate, pitch)
                 )
                 future.result(timeout=60)
         except RuntimeError:
             # No running loop, safe to use asyncio.run
-            asyncio.run(_edge_tts_generate(script, voice, out_path))
+            asyncio.run(_edge_tts_generate(script, voice, out_path, rate, pitch))
 
         log(f"Edge TTS voiceover saved: {out_path.name}")
         return out_path
@@ -384,7 +393,7 @@ def generate_voiceover(
     if provider == "edge":
         voice_override = voice_config.get("voice_id", "")
         try:
-            return _generate_edge_tts(script, out_dir, lang, voice_override)
+            return _generate_edge_tts(script, out_dir, lang, voice_override, voice_config.get("settings"))
         except Exception as e:
             log(f"Edge TTS failed: {e}")
             # Fall through to next provider
