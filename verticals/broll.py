@@ -2,12 +2,13 @@
 
 import base64
 import hashlib
+from io import BytesIO
 import os
-import textwrap
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageOps
 
 from .config import VIDEO_WIDTH, VIDEO_HEIGHT, get_gemini_key, run_cmd
 from .log import log
@@ -84,46 +85,62 @@ def _generate_image_gemini(prompt: str, output_path: Path, api_key: str):
     raise RuntimeError("No image in Gemini response")
 
 
-def _load_font(size: int, bold: bool = False):
-    names = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/Library/Fonts/Arial Bold.ttf" if bold else "/Library/Fonts/Arial.ttf",
-    ]
-    for name in names:
-        try:
-            return ImageFont.truetype(name, size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
+def _fit_to_portrait(image: Image.Image, output_path: Path):
+    """Resize/crop any image into the configured 9:16 video frame."""
+    img = ImageOps.exif_transpose(image).convert("RGB")
+    target_w, target_h = VIDEO_WIDTH, VIDEO_HEIGHT
+    orig_w, orig_h = img.size
+    scale = max(target_w / orig_w, target_h / orig_h)
+    new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left = (new_w - target_w) // 2
+    top = (new_h - target_h) // 2
+    img = img.crop((left, top, left + target_w, top + target_h))
+    img.save(output_path)
 
 
-def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
-    words = text.replace("\n", " ").split()
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
-            current = candidate
-        else:
-            if current:
-                lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    if not lines:
-        lines = textwrap.wrap(text, width=26) or ["Untitled visual"]
-    return lines[:7]
+@with_retry(max_retries=1, base_delay=2.0)
+def _generate_image_pollinations(prompt: str, output_path: Path):
+    """Generate a portrait b-roll frame through Pollinations as a no-key fallback."""
+    enabled = os.environ.get("POLLINATIONS_ENABLED", "true").lower()
+    if enabled in {"0", "false", "no", "off"}:
+        raise RuntimeError("Pollinations fallback disabled")
+
+    seed = int(hashlib.sha256(prompt.encode()).hexdigest()[:8], 16)
+    image_prompt = (
+        f"{prompt}. Vertical 9:16 YouTube Shorts b-roll frame, cinematic, "
+        "photorealistic, visually clear, no captions, no text overlays."
+    )
+    url = f"https://image.pollinations.ai/prompt/{quote(image_prompt, safe='')}"
+    params = {
+        "width": os.environ.get("POLLINATIONS_WIDTH", "720"),
+        "height": os.environ.get("POLLINATIONS_HEIGHT", "1280"),
+        "nologo": "true",
+        "private": "true",
+        "seed": str(seed),
+    }
+    model = os.environ.get("POLLINATIONS_IMAGE_MODEL", "").strip()
+    if model:
+        params["model"] = model
+
+    r = requests.get(url, params=params, timeout=150, headers={"Accept": "image/*"})
+    content_type = r.headers.get("Content-Type", "")
+    if r.status_code != 200 or not content_type.startswith("image/"):
+        detail = r.text[:200] if getattr(r, "text", "") else content_type
+        raise RuntimeError(f"Pollinations image {r.status_code}: {detail}")
+
+    img = Image.open(BytesIO(r.content))
+    _fit_to_portrait(img, output_path)
 
 
 def _fallback_frame(i: int, out_dir: Path, prompt: str = "") -> Path:
-    """Readable graphic fallback if Gemini fails or is not configured."""
+    """Text-free graphic fallback if all image providers fail."""
     seed = int(hashlib.sha256(f"{prompt}:{i}".encode()).hexdigest()[:8], 16)
     palettes = [
-        ((12, 18, 42), (37, 99, 235), (245, 158, 11)),
-        ((18, 24, 38), (16, 185, 129), (244, 63, 94)),
-        ((24, 16, 44), (168, 85, 247), (34, 211, 238)),
+        ((16, 24, 52), (37, 99, 235), (245, 158, 11)),
+        ((16, 42, 46), (20, 184, 166), (244, 63, 94)),
+        ((34, 24, 64), (168, 85, 247), (34, 211, 238)),
+        ((38, 34, 28), (234, 88, 12), (132, 204, 22)),
     ]
     bg, primary, accent = palettes[seed % len(palettes)]
     img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), bg)
@@ -131,48 +148,65 @@ def _fallback_frame(i: int, out_dir: Path, prompt: str = "") -> Path:
 
     for y in range(VIDEO_HEIGHT):
         t = y / VIDEO_HEIGHT
-        r = int(bg[0] * (1 - t) + max(primary[0] - 40, 0) * t)
-        g = int(bg[1] * (1 - t) + max(primary[1] - 40, 0) * t)
-        b = int(bg[2] * (1 - t) + max(primary[2] - 40, 0) * t)
+        r = int(bg[0] * (1 - t) + primary[0] * t)
+        g = int(bg[1] * (1 - t) + primary[1] * t)
+        b = int(bg[2] * (1 - t) + primary[2] * t)
         draw.line([(0, y), (VIDEO_WIDTH, y)], fill=(r, g, b, 255))
 
-    for n in range(9):
+    # Soft depth and motion. Keep it visual-only: no prompt text, no labels.
+    for n in range(16):
         x = (seed * (n + 3) * 37) % VIDEO_WIDTH
         y = (seed * (n + 5) * 53) % VIDEO_HEIGHT
-        radius = 120 + ((seed >> (n % 8)) % 260)
+        radius = 100 + ((seed >> (n % 8)) % 300)
         color = primary if n % 2 == 0 else accent
-        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(*color, 28))
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(*color, 24))
 
-    margin = 96
-    card_top = 430
-    card_bottom = 1450
-    draw.rounded_rectangle(
-        (margin, card_top, VIDEO_WIDTH - margin, card_bottom),
-        radius=44,
-        fill=(5, 8, 18, 178),
-        outline=(*accent, 180),
-        width=3,
-    )
+    # Build a cinematic "scene" from silhouettes, panels, and light trails.
+    horizon = 1180 + (seed % 180)
+    draw.rectangle((0, horizon, VIDEO_WIDTH, VIDEO_HEIGHT), fill=(0, 0, 0, 42))
 
-    label_font = _load_font(34, bold=True)
-    title_font = _load_font(70, bold=True)
-    small_font = _load_font(34)
-    draw.text((margin + 52, card_top + 58), "B-ROLL VISUAL", font=label_font, fill=(*accent, 255))
+    for n in range(11):
+        x = 90 + ((seed * (n + 11) * 19) % 900)
+        width = 28 + ((seed >> (n % 10)) % 95)
+        height = 220 + ((seed * (n + 7)) % 720)
+        top = max(260, horizon - height)
+        color = primary if n % 3 else accent
+        draw.rounded_rectangle(
+            (x, top, x + width, horizon + 80),
+            radius=10,
+            fill=(*color, 32 + (n % 4) * 10),
+            outline=(*color, 80),
+            width=2,
+        )
+        for m in range(3):
+            yy = top + 34 + m * 74
+            if yy < horizon:
+                draw.line((x + 10, yy, x + width - 10, yy), fill=(*accent, 92), width=3)
 
-    clean_prompt = prompt.strip() or "Cinematic visual scene"
-    clean_prompt = clean_prompt.replace("photorealistic, cinematic lighting, high quality, 4K", "")
-    lines = _wrap(draw, clean_prompt, title_font, VIDEO_WIDTH - (margin + 52) * 2)
-    y = card_top + 140
-    for line in lines:
-        draw.text((margin + 52, y), line, font=title_font, fill=(245, 247, 255, 255))
-        y += 86
+    for n in range(18):
+        y = 260 + ((seed * (n + 13) * 17) % 1200)
+        x1 = -80 + ((seed * (n + 3)) % 340)
+        x2 = VIDEO_WIDTH + 80 - ((seed * (n + 9)) % 320)
+        color = accent if n % 2 else primary
+        draw.line((x1, y, x2, y + ((n % 5) - 2) * 42), fill=(*color, 42), width=2 + (n % 4))
 
-    draw.rectangle((margin + 52, card_bottom - 170, VIDEO_WIDTH - margin - 52, card_bottom - 164), fill=(*accent, 210))
-    draw.text(
-        (margin + 52, card_bottom - 118),
-        f"SCENE {i + 1:02d}",
-        font=small_font,
-        fill=(207, 213, 225, 255),
+    center_x = VIDEO_WIDTH // 2 + ((seed % 161) - 80)
+    center_y = 730 + ((seed >> 8) % 260)
+    for radius, alpha in [(360, 28), (260, 46), (165, 72), (72, 150)]:
+        draw.ellipse(
+            (center_x - radius, center_y - radius, center_x + radius, center_y + radius),
+            outline=(*accent, alpha),
+            width=4,
+        )
+
+    draw.polygon(
+        [
+            (center_x, center_y - 220),
+            (center_x + 230, center_y + 180),
+            (center_x - 230, center_y + 180),
+        ],
+        fill=(*primary, 36),
+        outline=(*accent, 90),
     )
 
     path = out_dir / f"broll_{i}.png"
@@ -181,40 +215,39 @@ def _fallback_frame(i: int, out_dir: Path, prompt: str = "") -> Path:
 
 
 def generate_broll(prompts: list, out_dir: Path) -> list[Path]:
-    """Generate 3 b-roll frames via Gemini Imagen, with fallback."""
+    """Generate b-roll frames, preferring image providers before graphic fallback."""
     api_key = get_gemini_key()
     if not api_key:
         log(
-            "GEMINI_API_KEY not set — using solid-color fallback frames. "
+            "GEMINI_API_KEY not set — trying no-key Pollinations image fallback. "
             "Get an AI Studio key at https://aistudio.google.com/apikey "
             "(must be an AI Studio key; Vertex AI / service-account credentials "
             "are rejected with a 403 'unregistered callers' error)."
         )
-        return [_fallback_frame(i, out_dir, prompts[i % len(prompts)] if prompts else "") for i in range(min(3, max(len(prompts), 1)))]
     frames = []
+    selected_prompts = prompts[:3] or ["Cinematic visual scene"]
 
-    for i, prompt in enumerate(prompts[:3]):
+    for i, prompt in enumerate(selected_prompts):
         out_path = out_dir / f"broll_{i}.png"
-        log(f"Generating b-roll frame {i+1}/3 via Gemini Imagen...")
+
+        if api_key:
+            log(f"Generating b-roll frame {i+1}/{len(selected_prompts)} via Gemini Imagen...")
+            try:
+                _generate_image_gemini(prompt, out_path, api_key)
+                _fit_to_portrait(Image.open(out_path), out_path)
+                frames.append(out_path)
+                continue
+            except Exception as e:
+                log(f"Gemini frame {i+1} failed: {e} — trying Pollinations fallback")
 
         try:
-            _generate_image_gemini(prompt, out_path, api_key)
-
-            # Resize/crop to 9:16 portrait
-            img = Image.open(out_path).convert("RGB")
-            target_w, target_h = VIDEO_WIDTH, VIDEO_HEIGHT
-            orig_w, orig_h = img.size
-            scale = max(target_w / orig_w, target_h / orig_h)
-            new_w, new_h = int(orig_w * scale), int(orig_h * scale)
-            img = img.resize((new_w, new_h), Image.LANCZOS)
-            left = (new_w - target_w) // 2
-            top = (new_h - target_h) // 2
-            img = img.crop((left, top, left + target_w, top + target_h))
-            img.save(out_path)
+            log(f"Generating b-roll frame {i+1}/{len(selected_prompts)} via Pollinations fallback...")
+            _generate_image_pollinations(prompt, out_path)
             frames.append(out_path)
+            continue
 
         except Exception as e:
-            log(f"Frame {i+1} failed: {e} — using fallback")
+            log(f"Image fallback frame {i+1} failed: {e} — using readable graphic fallback")
             frames.append(_fallback_frame(i, out_dir, prompt))
 
     return frames
