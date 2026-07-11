@@ -1,5 +1,6 @@
 """ffmpeg video assembly — frames + voiceover + music + captions."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from .broll import animate_frame
@@ -28,6 +29,86 @@ def get_audio_duration(path: Path) -> float:
         capture=True,
     )
     return float(r.stdout.strip())
+
+
+@dataclass(frozen=True)
+class FinalEncoding:
+    name: str
+    extension: str
+    video_args: list[str]
+    audio_args: list[str]
+    browser_safe: bool = True
+
+
+def _ffmpeg_encoders() -> set[str]:
+    try:
+        r = run_cmd(["ffmpeg", "-hide_banner", "-encoders"], capture=True)
+    except Exception:
+        return set()
+
+    encoders: set[str] = set()
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and (parts[0].startswith("V") or parts[0].startswith("A")):
+            encoders.add(parts[1])
+    return encoders
+
+
+def _choose_final_encoding() -> FinalEncoding:
+    encoders = _ffmpeg_encoders()
+
+    if "libx264" in encoders:
+        return FinalEncoding(
+            name="H.264/libx264",
+            extension="mp4",
+            video_args=["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+            audio_args=["-c:a", "aac", "-b:a", "128k"],
+        )
+
+    if "libopenh264" in encoders:
+        return FinalEncoding(
+            name="H.264/libopenh264",
+            extension="mp4",
+            video_args=["-c:v", "libopenh264", "-b:v", "2600k", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+            audio_args=["-c:a", "aac", "-b:a", "128k"],
+        )
+
+    if "h264_videotoolbox" in encoders:
+        return FinalEncoding(
+            name="H.264/videotoolbox",
+            extension="mp4",
+            video_args=["-c:v", "h264_videotoolbox", "-b:v", "2600k", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+            audio_args=["-c:a", "aac", "-b:a", "128k"],
+        )
+
+    if "libvpx-vp9" in encoders and "libopus" in encoders:
+        return FinalEncoding(
+            name="WebM/VP9",
+            extension="webm",
+            video_args=["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32", "-pix_fmt", "yuv420p"],
+            audio_args=["-c:a", "libopus", "-b:a", "128k"],
+        )
+
+    if "libvpx" in encoders and "libvorbis" in encoders:
+        return FinalEncoding(
+            name="WebM/VP8",
+            extension="webm",
+            video_args=["-c:v", "libvpx", "-b:v", "2600k", "-pix_fmt", "yuv420p"],
+            audio_args=["-c:a", "libvorbis", "-q:a", "4"],
+        )
+
+    log(
+        "WARNING: no browser-safe ffmpeg video encoder found. Falling back to "
+        "mpeg4-in-mp4, which may play as audio-only in some browsers. Install "
+        "ffmpeg with libx264 or libvpx/libopus on the backend."
+    )
+    return FinalEncoding(
+        name="MPEG-4 Part 2 fallback",
+        extension="mp4",
+        video_args=["-c:v", "mpeg4", "-q:v", "3", "-pix_fmt", "yuv420p"],
+        audio_args=["-c:a", "aac", "-b:a", "128k"],
+        browser_safe=False,
+    )
 
 
 def assemble_video(
@@ -67,7 +148,9 @@ def assemble_video(
     ])
 
     # Build the final ffmpeg command with optional captions + music
-    out_path = MEDIA_DIR / f"verticals_{job_id}_{lang}.mp4"
+    encoding = _choose_final_encoding()
+    log(f"Final video encoding: {encoding.name}")
+    out_path = MEDIA_DIR / f"verticals_{job_id}_{lang}.{encoding.extension}"
 
     # Determine video filter (captions via ASS)
     vf_parts = []
@@ -108,8 +191,9 @@ def assemble_video(
 
         cmd += [
             "-map", "0:v", "-map", "[aout]",
-            "-c:v", "mpeg4", "-q:v", "3", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-shortest",
+            *encoding.video_args,
+            *encoding.audio_args,
+            "-shortest",
             str(out_path), "-y", "-loglevel", "quiet",
         ]
     else:
@@ -120,8 +204,10 @@ def assemble_video(
             cmd += ["-vf", vf]
 
         cmd += [
-            "-c:v", "mpeg4" if vf else "copy",
-            "-c:a", "aac", "-shortest",
+            "-map", "0:v:0", "-map", "1:a:0",
+            *encoding.video_args,
+            *encoding.audio_args,
+            "-shortest",
             str(out_path), "-y", "-loglevel", "quiet",
         ]
 
