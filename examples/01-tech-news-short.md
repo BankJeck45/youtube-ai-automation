@@ -5,7 +5,7 @@ Goal: turn a one-line headline into an uploaded YouTube Short using the default 
 ## Keys needed
 
 - `ANTHROPIC_API_KEY` (script) — or swap `--provider` for `gemini`, `openai`, or `ollama`
-- `GEMINI_API_KEY` (b-roll + thumbnail) — without it the pipeline uses solid-color fallback frames
+- `GEMINI_API_KEY` (b-roll + thumbnail) — without it the pipeline tries no-key visual fallback frames
 - YouTube OAuth for the upload stage (`python scripts/setup_youtube_oauth.py`)
 
 ## Step 1 — Draft
