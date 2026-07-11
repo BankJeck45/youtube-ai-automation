@@ -73,7 +73,7 @@ Real output (model: a local qwen3-coder:30b; yours depends on what you pulled):
 python -m verticals produce --draft ~/.verticals/drafts/<id>.json --lang en
 ```
 
-With no `GEMINI_API_KEY`, b-roll uses solid-color fallback frames; Edge TTS and Whisper captions are free, so this still yields a complete 1080x1920 MP4. Add a Gemini key when you want real AI visuals.
+With no `GEMINI_API_KEY`, b-roll first tries no-key visual fallback frames; Edge TTS and Whisper captions are free, so this still yields a complete 1080x1920 MP4. Add a Gemini key when you want first-choice Gemini visuals.
 
 ## Interactive picker
 
