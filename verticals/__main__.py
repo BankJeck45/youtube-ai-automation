@@ -143,6 +143,7 @@ def cmd_produce(args):
             draft.get("broll_prompts", ["Cinematic landscape"]),
             visual_count,
             get_visual_prompt_suffix(profile),
+            visual_cfg,
         )
         draft["broll_prompts_timed"] = timed_prompts
         log(f"Generating {visual_count} narration-aligned b-roll frames (~{target_seconds:.1f}s each)...")
@@ -208,6 +209,8 @@ def cmd_produce(args):
             job_id=job_id,
             lang=lang,
             ass_path=captions_result.get("ass_path"),
+            srt_path=captions_result.get("srt_path"),
+            caption_style=caption_config,
             music_path=music_result.get("track_path"),
             duck_filter=music_result.get("duck_filter"),
         )

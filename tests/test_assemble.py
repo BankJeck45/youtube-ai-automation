@@ -1,9 +1,11 @@
-"""Tests for pipeline/assemble.py — audio duration parsing."""
+"""Tests for video assembly."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-from verticals.assemble import _choose_final_encoding, get_audio_duration
+from PIL import Image
+
+from verticals.assemble import _caption_overlay_pngs, _choose_final_encoding, _parse_srt, get_audio_duration
 
 
 class TestGetAudioDuration:
@@ -68,3 +70,34 @@ class TestChooseFinalEncoding:
         assert encoding.extension == "mp4"
         assert "mpeg4" in encoding.video_args
         assert encoding.browser_safe is False
+
+
+def test_parse_srt_cues(tmp_path):
+    srt = tmp_path / "captions.srt"
+    srt.write_text(
+        "1\n00:00:00,500 --> 00:00:02,000\nThe corridor answers\n\n"
+        "2\n00:00:02,200 --> 00:00:03,400\nDo not turn around\n",
+        encoding="utf-8",
+    )
+
+    cues = _parse_srt(srt)
+
+    assert cues == [
+        (0.5, 2.0, "The corridor answers"),
+        (2.2, 3.4, "Do not turn around"),
+    ]
+
+
+def test_caption_overlay_pngs_are_transparent_with_visible_text(tmp_path):
+    overlays = _caption_overlay_pngs(
+        [(0.5, 2.0, "The corridor answers")],
+        tmp_path,
+        {"font_size": 48, "position": "lower_left", "text_color": "#D8D8D8"},
+    )
+
+    assert len(overlays) == 1
+    assert overlays[0][0] == 0.5
+    assert overlays[0][1] == 2.0
+    img = Image.open(overlays[0][2]).convert("RGBA")
+    assert img.size == (1080, 1920)
+    assert img.getbbox() is not None

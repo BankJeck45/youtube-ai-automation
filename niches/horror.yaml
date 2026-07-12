@@ -39,7 +39,8 @@ script:
 visuals:
   style: "dark archive horror, narrow corridors, low-key lighting, realistic cinematic stills"
   mood: "ominous, haunted, foggy, abandoned, claustrophobic"
-  segment_seconds: 4.5
+  scene_world: "one continuous dark archive short set around an endless corridor, dim lamps, fog, shadowy doorways, and recovered evidence; keep the same eerie corridor universe across every shot"
+  segment_seconds: 3.6
   max_segments: 22
   color_palette: ["#030303", "#0B0D10", "#1F2933", "#CDBF9B", "#6B0F0F"]
   subjects:
@@ -57,7 +58,11 @@ visuals:
       - "bright colors"
       - "text in image"
       - "obvious jump scare face"
-  prompt_suffix: "photorealistic dark horror documentary frame, thin drifting smoke, subtle film grain, desaturated, dim practical lights, no text, no subtitles"
+      - "generic bright library aisles"
+      - "standalone clock closeups unless the narration explicitly mentions a clock"
+      - "empty roads unless the narration explicitly mentions a road"
+      - "wide daylight landscapes"
+  prompt_suffix: "photorealistic dark horror documentary frame, endless corridor reference style, thin drifting smoke, subtle film grain, desaturated, dim practical lights, deep shadows, no text, no subtitles"
 
 voice:
   pace: "slow, approximately 125 to 135 words per minute"

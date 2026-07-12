@@ -172,21 +172,37 @@ def build_timed_broll_prompts(
     base_prompts: list[str],
     target_count: int,
     prompt_suffix: str = "",
+    visual_context: dict | None = None,
 ) -> list[str]:
     """Create narration-aligned image prompts for each 3-6 second segment."""
+    visual_context = visual_context or {}
     base = [str(p).strip() for p in (base_prompts or []) if str(p).strip()]
     if not base:
         base = ["cinematic scene matching the narration"]
+
+    style = str(visual_context.get("style", "")).strip()
+    mood = str(visual_context.get("mood", "")).strip()
+    scene_world = str(visual_context.get("scene_world", "")).strip()
+    subjects = visual_context.get("subjects", {}) if isinstance(visual_context.get("subjects", {}), dict) else {}
+    preferred = [str(s).strip() for s in subjects.get("prefer", []) if str(s).strip()]
+    avoided = [str(s).strip() for s in subjects.get("avoid", []) if str(s).strip()]
 
     beats = _split_script_beats(script, target_count)
     prompts = []
     for i in range(target_count):
         beat = beats[i] if i < len(beats) else beats[-1] if beats else ""
         anchor = base[i % len(base)]
+        subject = preferred[i % len(preferred)] if preferred else anchor
         parts = [
-            anchor,
+            f"visual continuity world: {scene_world}" if scene_world else "",
+            f"style: {style}" if style else "",
+            f"mood: {mood}" if mood else "",
+            f"primary subject: {subject}",
+            f"supporting image cue: {anchor}" if anchor != subject else "",
             f"narration beat {i + 1}: {beat}" if beat else "",
-            "show the scene described by this beat, no text, no subtitles, no logos, no UI words",
+            "directly illustrate this exact narration beat, avoid generic metaphor shots",
+            f"avoid: {', '.join(avoided[:8])}" if avoided else "",
+            "no text, no subtitles, no logos, no UI words",
             "thin atmospheric smoke or fog, subtle film grain, slow cinematic motion feel",
             prompt_suffix,
         ]

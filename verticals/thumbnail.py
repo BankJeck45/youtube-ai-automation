@@ -125,6 +125,53 @@ def _overlay_vignette(img: Image.Image) -> Image.Image:
     return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
 
+def _generate_local_dark_thumb(prompt: str, output_path: Path):
+    """Create a no-network dark archive thumbnail background."""
+    seed = int(hashlib.sha256(prompt.encode()).hexdigest()[:8], 16)
+    img = Image.new("RGB", (THUMB_WIDTH, THUMB_HEIGHT), (4, 6, 7))
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    # Corridor walls and floor perspective.
+    vanish_x = THUMB_WIDTH // 2 + ((seed % 121) - 60)
+    vanish_y = 250 + ((seed >> 8) % 90)
+    draw.rectangle((0, 0, THUMB_WIDTH, THUMB_HEIGHT), fill=(3, 5, 6, 255))
+    for i in range(12):
+        t = i / 11
+        shade = int(12 + t * 28)
+        x_left = int((1 - t) * 0 + t * vanish_x)
+        x_right = int((1 - t) * THUMB_WIDTH + t * vanish_x)
+        y = int((1 - t) * THUMB_HEIGHT + t * vanish_y)
+        draw.line((x_left, y, vanish_x, vanish_y), fill=(shade, shade + 4, shade + 8, 170), width=3)
+        draw.line((x_right, y, vanish_x, vanish_y), fill=(shade, shade + 4, shade + 8, 170), width=3)
+
+    # Dim ceiling lamps down the corridor.
+    for i in range(6):
+        t = i / 5
+        x = int(vanish_x + (seed % 31 - 15) * (1 - t))
+        y = int(vanish_y + 24 + t * 300)
+        radius = int(24 - t * 13)
+        alpha = int(120 - t * 55)
+        draw.ellipse((x - radius, y - radius // 2, x + radius, y + radius // 2), fill=(230, 221, 180, alpha))
+        draw.ellipse((x - radius * 4, y - radius * 2, x + radius * 4, y + radius * 2), fill=(180, 175, 145, 18))
+
+    # Thin smoke/fog.
+    for i in range(18):
+        x = (seed * (i + 7) * 41) % THUMB_WIDTH
+        y = 120 + ((seed * (i + 3) * 23) % 520)
+        w = 220 + ((seed >> (i % 8)) % 360)
+        h = 34 + ((seed >> (i % 6)) % 90)
+        draw.ellipse((x - w, y - h, x + w, y + h), fill=(155, 168, 160, 16))
+
+    # A small silhouette anchors the horror story without turning into a face.
+    sx = vanish_x + ((seed >> 12) % 70 - 35)
+    sy = 465
+    draw.ellipse((sx - 18, sy - 82, sx + 18, sy - 46), fill=(2, 2, 3, 210))
+    draw.rounded_rectangle((sx - 22, sy - 47, sx + 22, sy + 55), radius=13, fill=(2, 2, 3, 220))
+
+    img = _overlay_vignette(img)
+    img.save(output_path)
+
+
 def _overlay_title(image_path: Path, title: str, output_path: Path, config: dict | None = None):
     """Overlay bold title text with the dark archive reference style."""
     config = config or {}
@@ -206,10 +253,18 @@ def generate_thumbnail(draft: dict, out_dir: Path) -> Path:
             _generate_thumb_image(prompt, raw_path, api_key)
         except Exception as e:
             log(f"Gemini thumbnail failed: {e} — trying no-key visual fallback")
-            _generate_thumb_pollinations(prompt, raw_path)
+            try:
+                _generate_thumb_pollinations(prompt, raw_path)
+            except Exception as fallback_error:
+                log(f"Pollinations thumbnail failed: {fallback_error} — using local dark archive thumbnail")
+                _generate_local_dark_thumb(prompt, raw_path)
     else:
         log("GEMINI_API_KEY not set — generating thumbnail via no-key visual fallback")
-        _generate_thumb_pollinations(prompt, raw_path)
+        try:
+            _generate_thumb_pollinations(prompt, raw_path)
+        except Exception as e:
+            log(f"Pollinations thumbnail failed: {e} — using local dark archive thumbnail")
+            _generate_local_dark_thumb(prompt, raw_path)
 
     log("Adding title overlay...")
     _overlay_title(raw_path, title, final_path, thumb_config)

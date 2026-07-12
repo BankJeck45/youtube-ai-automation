@@ -84,3 +84,26 @@ def test_builds_timed_prompts_from_script_beats():
     assert "corridor appears" in prompts[0]
     assert "no text" in prompts[0]
     assert "horror documentary style" in prompts[0]
+
+
+def test_timed_prompts_use_visual_context():
+    prompts = build_timed_broll_prompts(
+        "A voice answers from the hallway. The door opens by itself.",
+        ["old tape recorder"],
+        2,
+        "dark archive frame",
+        {
+            "style": "dark corridor horror",
+            "mood": "foggy and claustrophobic",
+            "scene_world": "one endless corridor",
+            "subjects": {
+                "prefer": ["shadowy doorway", "dim corridor lamp"],
+                "avoid": ["bright library", "empty road"],
+            },
+        },
+    )
+
+    assert "one endless corridor" in prompts[0]
+    assert "shadowy doorway" in prompts[0]
+    assert "bright library" in prompts[0]
+    assert "directly illustrate" in prompts[0]
