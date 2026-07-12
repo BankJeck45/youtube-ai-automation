@@ -98,15 +98,16 @@ def build_duck_filter(speech_regions: list[tuple[float, float]], buffer: float =
     if not speech_regions:
         return f"volume={vol_gap}"
 
-    # Build between() conditions for speech regions
+    # Escape expression commas for ffmpeg filter_complex. The command is
+    # executed without a shell, so shell-style quotes are not reliable here.
     conditions = []
     for start, end in speech_regions:
         s = max(0, start - buffer)
         e = end + buffer
-        conditions.append(f"between(t,{s:.2f},{e:.2f})")
+        conditions.append(f"between(t\\,{s:.2f}\\,{e:.2f})")
 
     condition_expr = "+".join(conditions)
-    return f"volume='if({condition_expr}, {vol_speech}, {vol_gap})':eval=frame"
+    return f"volume=if({condition_expr}\\,{vol_speech}\\,{vol_gap}):eval=frame"
 
 
 def select_and_prepare_music(

@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import shlex
+import tempfile
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -235,46 +237,52 @@ def _ffmpeg_encoders() -> set[str]:
 
 def _choose_final_encoding() -> FinalEncoding:
     encoders = _ffmpeg_encoders()
+    candidates: list[FinalEncoding] = []
 
     if "libx264" in encoders:
-        return FinalEncoding(
+        candidates.append(FinalEncoding(
             name="H.264/libx264",
             extension="mp4",
             video_args=["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
             audio_args=["-c:a", "aac", "-b:a", "128k"],
-        )
-
-    if "libopenh264" in encoders:
-        return FinalEncoding(
-            name="H.264/libopenh264",
-            extension="mp4",
-            video_args=["-c:v", "libopenh264", "-b:v", "2600k", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
-            audio_args=["-c:a", "aac", "-b:a", "128k"],
-        )
+        ))
 
     if "h264_videotoolbox" in encoders:
-        return FinalEncoding(
+        candidates.append(FinalEncoding(
             name="H.264/videotoolbox",
             extension="mp4",
             video_args=["-c:v", "h264_videotoolbox", "-b:v", "2600k", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
             audio_args=["-c:a", "aac", "-b:a", "128k"],
-        )
+        ))
+
+    if "libopenh264" in encoders:
+        candidates.append(FinalEncoding(
+            name="H.264/libopenh264",
+            extension="mp4",
+            video_args=["-c:v", "libopenh264", "-b:v", "2600k", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+            audio_args=["-c:a", "aac", "-b:a", "128k"],
+        ))
 
     if "libvpx-vp9" in encoders and "libopus" in encoders:
-        return FinalEncoding(
+        candidates.append(FinalEncoding(
             name="WebM/VP9",
             extension="webm",
             video_args=["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32", "-pix_fmt", "yuv420p"],
             audio_args=["-c:a", "libopus", "-b:a", "128k"],
-        )
+        ))
 
     if "libvpx" in encoders and "libvorbis" in encoders:
-        return FinalEncoding(
+        candidates.append(FinalEncoding(
             name="WebM/VP8",
             extension="webm",
             video_args=["-c:v", "libvpx", "-b:v", "2600k", "-pix_fmt", "yuv420p"],
             audio_args=["-c:a", "libvorbis", "-q:a", "4"],
-        )
+        ))
+
+    for encoding in candidates:
+        if _encoding_works(encoding):
+            return encoding
+        log(f"WARNING: ffmpeg listed {encoding.name}, but a smoke render failed. Trying next encoder.")
 
     log(
         "WARNING: no browser-safe ffmpeg video encoder found. Falling back to "
@@ -288,6 +296,96 @@ def _choose_final_encoding() -> FinalEncoding:
         audio_args=["-c:a", "aac", "-b:a", "128k"],
         browser_safe=False,
     )
+
+
+def _encoding_works(encoding: FinalEncoding) -> bool:
+    """Smoke-test an encoder; some ffmpeg builds list encoders that fail at runtime."""
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / f"encoder_smoke.{encoding.extension}"
+            run_cmd([
+                "ffmpeg",
+                "-hide_banner",
+                "-f", "lavfi", "-i", "color=c=black:s=160x284:d=0.25:r=15",
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-shortest",
+                *encoding.video_args,
+                *encoding.audio_args,
+                str(out),
+                "-y", "-loglevel", "error",
+            ], capture=True, timeout=20)
+            return out.exists() and out.stat().st_size > 0
+    except Exception as e:
+        log(f"WARNING: encoder smoke test failed for {encoding.name}: {str(e).strip()}")
+        return False
+
+
+def _build_music_audio_filter(duration: float, duck_filter: str | None = None) -> str:
+    """Build final audio filter for looped music + voiceover mixing."""
+    music_filters = [f"[2:a]atrim=0:{duration:.3f}", "asetpts=PTS-STARTPTS"]
+    if duck_filter:
+        music_filters.append(duck_filter)
+    music_filter = ",".join(music_filters) + "[music]"
+    return f"{music_filter};[1:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+
+
+def _final_no_music_cmd(
+    video_input: Path,
+    voiceover: Path,
+    out_path: Path,
+    encoding: FinalEncoding,
+    vf: str | None = None,
+) -> list[str]:
+    cmd = ["ffmpeg", "-i", str(video_input), "-i", str(voiceover)]
+    if vf:
+        cmd += ["-vf", vf]
+    cmd += [
+        "-map", "0:v:0", "-map", "1:a:0",
+        *encoding.video_args,
+        *encoding.audio_args,
+        "-shortest",
+        str(out_path), "-y", "-loglevel", "quiet",
+    ]
+    return cmd
+
+
+def _cmd_for_log(cmd: list[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in cmd)
+
+
+def _cmd_with_error_loglevel(cmd: list[str]) -> list[str]:
+    cmd = list(cmd)
+    if "-loglevel" in cmd:
+        idx = cmd.index("-loglevel")
+        if idx + 1 < len(cmd):
+            cmd[idx + 1] = "error"
+            return cmd
+    return [*cmd, "-loglevel", "error"]
+
+
+def _run_ffmpeg_capture(cmd: list[str]) -> None:
+    try:
+        run_cmd(_cmd_with_error_loglevel(cmd), capture=True)
+    except Exception as e:
+        message = str(e).strip() or repr(e)
+        raise RuntimeError(f"{message}\nCommand: {_cmd_for_log(cmd)}") from e
+
+
+def _run_final_render(cmd: list[str], fallback_cmds: list[tuple[str, list[str]]] | None = None):
+    attempts = [("primary", cmd), *(fallback_cmds or [])]
+    errors: list[str] = []
+    for label, attempt in attempts:
+        try:
+            if label != "primary":
+                log(f"Retrying final render: {label}")
+            _run_ffmpeg_capture(attempt)
+            return
+        except Exception as e:
+            error_text = str(e).strip()
+            errors.append(f"{label}: {error_text}")
+            log(f"WARNING: final render attempt failed ({label}): {error_text[:1200]}")
+
+    raise RuntimeError("Final render failed after retries:\n" + "\n\n".join(errors))
 
 
 def assemble_video(
@@ -332,6 +430,7 @@ def assemble_video(
     encoding = _choose_final_encoding()
     log(f"Final video encoding: {encoding.name}")
     out_path = MEDIA_DIR / f"verticals_{job_id}_{lang}.{encoding.extension}"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Determine caption path. ASS is best when libass exists; otherwise burn
     # SRT captions through PNG overlays so the final video still has text.
@@ -379,14 +478,10 @@ def assemble_video(
         # Three inputs: video, voiceover, music
         cmd = ["ffmpeg", "-i", str(video_input), "-i", str(voiceover)]
 
-        # Loop music to match video duration, apply ducking
-        music_filter = f"[2:a]aloop=loop=-1:size=2e+09,atrim=0:{duration}"
-        if duck_filter:
-            music_filter += f",{duck_filter}"
-        music_filter += "[music]"
-
-        # Mix voiceover + ducked music
-        audio_filter = f"{music_filter};[1:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+        # The music input is already looped with -stream_loop. Keep the
+        # filtergraph simple because some ffmpeg builds reject aloop sizes such
+        # as 2e+09 and fail the entire render.
+        audio_filter = _build_music_audio_filter(duration, duck_filter)
 
         cmd += [
             "-stream_loop", "-1", "-i", str(music_path),
@@ -403,21 +498,34 @@ def assemble_video(
             "-shortest",
             str(out_path), "-y", "-loglevel", "quiet",
         ]
+
+        fallback_cmds: list[tuple[str, list[str]]] = []
+        if duck_filter:
+            plain_music = ["ffmpeg", "-i", str(video_input), "-i", str(voiceover)]
+            plain_music += [
+                "-stream_loop", "-1", "-i", str(music_path),
+                "-filter_complex", _build_music_audio_filter(duration, "volume=0.14"),
+            ]
+            if vf:
+                plain_music += ["-vf", vf]
+            plain_music += [
+                "-map", "0:v:0", "-map", "[aout]",
+                *encoding.video_args,
+                *encoding.audio_args,
+                "-shortest",
+                str(out_path), "-y", "-loglevel", "quiet",
+            ]
+            fallback_cmds.append(("music without ducking", plain_music))
+        fallback_cmds.append(("without background music", _final_no_music_cmd(video_input, voiceover, out_path, encoding, vf)))
+        if vf:
+            fallback_cmds.append(("without captions filter", _final_no_music_cmd(video_input, voiceover, out_path, encoding)))
     else:
         # Two inputs: video + voiceover (no music)
-        cmd = ["ffmpeg", "-i", str(video_input), "-i", str(voiceover)]
-
+        cmd = _final_no_music_cmd(video_input, voiceover, out_path, encoding, vf)
+        fallback_cmds = []
         if vf:
-            cmd += ["-vf", vf]
+            fallback_cmds.append(("without captions filter", _final_no_music_cmd(video_input, voiceover, out_path, encoding)))
 
-        cmd += [
-            "-map", "0:v:0", "-map", "1:a:0",
-            *encoding.video_args,
-            *encoding.audio_args,
-            "-shortest",
-            str(out_path), "-y", "-loglevel", "quiet",
-        ]
-
-    run_cmd(cmd)
+    _run_final_render(cmd, fallback_cmds)
     log(f"Video assembled: {out_path}")
     return out_path
