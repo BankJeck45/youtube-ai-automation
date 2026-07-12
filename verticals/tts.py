@@ -9,6 +9,7 @@ macOS say is the last-resort fallback.
 
 import base64
 import os
+import shutil
 from pathlib import Path
 
 import requests
@@ -25,7 +26,7 @@ from .log import log
 from .retry import with_retry
 
 
-# ─────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────
 # Edge TTS — free, cross-platform, 300+ voices
 # ─────────────────────────────────────────────────────
 
@@ -40,6 +41,83 @@ EDGE_VOICES = {
     "ja": "ja-JP-KeitaNeural",
     "ko": "ko-KR-InJoonNeural",
 }
+
+TTS_FALLBACK_ORDER = ["edge", "minimax", "elevenlabs", "60db", "say"]
+
+
+def _normalize_provider_name(name: str | None) -> str:
+    value = (name or "").strip().lower().replace("-", "_")
+    aliases = {
+        "": "auto",
+        "auto": "auto",
+        "edge_tts": "edge",
+        "edge": "edge",
+        "minimax": "minimax",
+        "elevenlabs": "elevenlabs",
+        "eleven_labs": "elevenlabs",
+        "60db": "60db",
+        "sixtydb": "60db",
+        "sixty_db": "60db",
+        "say": "say",
+    }
+    return aliases.get(value, value)
+
+
+def _edge_tts_available() -> bool:
+    try:
+        import edge_tts  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _say_available() -> bool:
+    return shutil.which("say") is not None
+
+
+def _provider_ready(provider: str) -> bool:
+    if provider == "edge":
+        return _edge_tts_available()
+    if provider == "minimax":
+        return bool(get_minimax_key())
+    if provider == "elevenlabs":
+        return bool(get_elevenlabs_key())
+    if provider == "60db":
+        return bool(get_60db_key())
+    if provider == "say":
+        return _say_available()
+    return False
+
+
+def _candidate_providers(preferred: str | None = None) -> list[str]:
+    preferred = _normalize_provider_name(preferred)
+    order: list[str] = []
+    if preferred != "auto":
+        order.append(preferred)
+    for candidate in TTS_FALLBACK_ORDER:
+        if candidate not in order:
+            order.append(candidate)
+    return order
+
+
+def _first_available_provider(preferred: str | None = None) -> str:
+    unavailable_requested: list[str] = []
+    for provider in _candidate_providers(preferred):
+        if _provider_ready(provider):
+            if unavailable_requested:
+                log(f"TTS provider {unavailable_requested[0]} unavailable; using {provider} instead.")
+            return provider
+        if provider == _normalize_provider_name(preferred) and provider != "auto":
+            unavailable_requested.append(provider)
+
+    raise RuntimeError(
+        "No TTS provider available. Install one:\n"
+        "  pip install edge-tts  (free, recommended)\n"
+        "  Set MINIMAX_API_KEY (AI-powered)\n"
+        "  Set ELEVENLABS_API_KEY (premium)\n"
+        "  Set SIXTYDB_API_KEY (low-cost multilingual)\n"
+        "  Or use macOS with the built-in 'say' command"
+    )
 
 
 async def _edge_tts_generate(text: str, voice: str, output_path: Path, rate: str = "+0%", pitch: str = "+0Hz"):
@@ -89,7 +167,7 @@ def _generate_edge_tts(
         raise RuntimeError(f"Edge TTS failed: {e}")
 
 
-# ─────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────
 # ElevenLabs — premium, most natural
 # ─────────────────────────────────────────────────────
 
@@ -136,7 +214,7 @@ def _generate_elevenlabs(
     return out_path
 
 
-# ─────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────
 # MiniMax TTS — AI-powered, supports streaming SSE
 # ─────────────────────────────────────────────────────
 
@@ -232,7 +310,7 @@ def _generate_minimax(
     return out_path
 
 
-# ─────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────
 # 60db — Indic-language native, low cost
 # ─────────────────────────────────────────────────────
 
@@ -306,6 +384,9 @@ def _generate_60db(
 
 def _generate_say(script: str, out_dir: Path) -> Path:
     """macOS 'say' fallback TTS."""
+    if not _say_available():
+        raise RuntimeError("macOS say TTS is not available on this server")
+
     out_path = out_dir / "voiceover_say.aiff"
     mp3_path = out_dir / "voiceover_say.mp3"
     run_cmd(["say", "-o", str(out_path), script])
@@ -326,46 +407,20 @@ def get_tts_provider(name: str | None = None) -> str:
     Priority: explicit name > TTS_PROVIDER env > auto-detect.
     Auto-detect tries: edge_tts > minimax > elevenlabs > 60db > say.
     """
-    if name and name != "auto":
-        return name.lower()
+    requested = _normalize_provider_name(name)
+    if requested != "auto":
+        return _first_available_provider(requested)
 
-    from_env = os.environ.get("TTS_PROVIDER", "").lower()
-    if from_env:
-        return from_env
+    from_env = _normalize_provider_name(os.environ.get("TTS_PROVIDER", ""))
+    if from_env != "auto":
+        return _first_available_provider(from_env)
 
     from .config import load_config
-    from_cfg = load_config().get("TTS_PROVIDER", "").lower()
-    if from_cfg:
-        return from_cfg
+    from_cfg = _normalize_provider_name(load_config().get("TTS_PROVIDER", ""))
+    if from_cfg != "auto":
+        return _first_available_provider(from_cfg)
 
-    # Auto-detect: Edge TTS first (free, cross-platform)
-    try:
-        import edge_tts  # noqa: F401
-        return "edge"
-    except ImportError:
-        pass
-
-    if get_minimax_key():
-        return "minimax"
-
-    if get_elevenlabs_key():
-        return "elevenlabs"
-
-    if get_60db_key():
-        return "60db"
-
-    # macOS say as last resort
-    import shutil
-    if shutil.which("say"):
-        return "say"
-
-    raise RuntimeError(
-        "No TTS provider available. Install one:\n"
-        "  pip install edge-tts  (free, recommended)\n"
-        "  Set MINIMAX_API_KEY (AI-powered)\n"
-        "  Set ELEVENLABS_API_KEY (premium)\n"
-        "  Or use macOS (has built-in 'say')"
-    )
+    return _first_available_provider("auto")
 
 
 def generate_voiceover(
@@ -389,75 +444,68 @@ def generate_voiceover(
     """
     provider = get_tts_provider(provider)
     voice_config = voice_config or {}
+    last_error: Exception | None = None
 
-    if provider == "edge":
+    for candidate in _candidate_providers(provider):
+        if not _provider_ready(candidate):
+            log(f"Skipping unavailable TTS provider: {candidate}")
+            continue
+
+        provider = candidate
         voice_override = voice_config.get("voice_id", "")
-        try:
-            return _generate_edge_tts(script, out_dir, lang, voice_override, voice_config.get("settings"))
-        except Exception as e:
-            log(f"Edge TTS failed: {e}")
-            # Fall through to next provider
-            if get_minimax_key():
-                log("Falling back to MiniMax TTS...")
-                provider = "minimax"
-            elif get_elevenlabs_key():
-                log("Falling back to ElevenLabs...")
-                provider = "elevenlabs"
-            elif get_60db_key():
-                log("Falling back to 60db...")
-                provider = "60db"
-            else:
-                log("Falling back to macOS say...")
+
+        if provider == "edge":
+            try:
+                return _generate_edge_tts(script, out_dir, lang, voice_override, voice_config.get("settings"))
+            except Exception as e:
+                last_error = e
+                log(f"Edge TTS failed: {e}")
+                continue
+
+        if provider == "minimax":
+            try:
+                return _generate_minimax(
+                    script, out_dir, lang,
+                    voice_id=voice_config.get("voice_id", ""),
+                    model=voice_config.get("model", "speech-2.8-hd"),
+                )
+            except Exception as e:
+                last_error = e
+                log(f"MiniMax TTS failed: {e}")
+                continue
+
+        if provider == "elevenlabs":
+            try:
+                return _generate_elevenlabs(
+                    script, out_dir, lang,
+                    voice_id=voice_config.get("voice_id", ""),
+                    settings=voice_config.get("settings"),
+                )
+            except Exception as e:
+                last_error = e
+                log(f"ElevenLabs failed: {e}")
+                continue
+
+        if provider == "60db":
+            try:
+                return _generate_60db(
+                    script, out_dir, lang,
+                    voice_id=voice_config.get("voice_id", ""),
+                    settings=voice_config.get("settings"),
+                )
+            except Exception as e:
+                last_error = e
+                log(f"60db failed: {e}")
+                continue
+
+        if provider == "say":
+            try:
                 return _generate_say(script, out_dir)
+            except Exception as e:
+                last_error = e
+                log(f"macOS say TTS failed: {e}")
+                continue
 
-    if provider == "minimax":
-        try:
-            return _generate_minimax(
-                script, out_dir, lang,
-                voice_id=voice_config.get("voice_id", ""),
-                model=voice_config.get("model", "speech-2.8-hd"),
-            )
-        except Exception as e:
-            log(f"MiniMax TTS failed: {e}")
-            if get_elevenlabs_key():
-                log("Falling back to ElevenLabs...")
-                provider = "elevenlabs"
-            elif get_60db_key():
-                log("Falling back to 60db...")
-                provider = "60db"
-            else:
-                log("Falling back to macOS say...")
-                return _generate_say(script, out_dir)
-
-    if provider == "elevenlabs":
-        try:
-            return _generate_elevenlabs(
-                script, out_dir, lang,
-                voice_id=voice_config.get("voice_id", ""),
-                settings=voice_config.get("settings"),
-            )
-        except Exception as e:
-            log(f"ElevenLabs failed: {e}")
-            if get_60db_key():
-                log("Falling back to 60db...")
-                provider = "60db"
-            else:
-                log("Falling back to macOS say...")
-                return _generate_say(script, out_dir)
-
-    if provider == "60db":
-        try:
-            return _generate_60db(
-                script, out_dir, lang,
-                voice_id=voice_config.get("voice_id", ""),
-                settings=voice_config.get("settings"),
-            )
-        except Exception as e:
-            log(f"60db failed: {e}")
-            log("Falling back to macOS say...")
-            return _generate_say(script, out_dir)
-
-    if provider == "say":
-        return _generate_say(script, out_dir)
-
-    raise ValueError(f"Unknown TTS provider: {provider}")
+    if last_error:
+        raise RuntimeError(f"No TTS provider could generate voiceover. Last error: {last_error}")
+    raise RuntimeError("No TTS provider could generate voiceover.")

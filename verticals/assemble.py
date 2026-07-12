@@ -263,20 +263,20 @@ def _choose_final_encoding() -> FinalEncoding:
             audio_args=["-c:a", "aac", "-b:a", "128k"],
         ))
 
-    if "libvpx-vp9" in encoders and "libopus" in encoders:
-        candidates.append(FinalEncoding(
-            name="WebM/VP9",
-            extension="webm",
-            video_args=["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32", "-pix_fmt", "yuv420p"],
-            audio_args=["-c:a", "libopus", "-b:a", "128k"],
-        ))
-
     if "libvpx" in encoders and "libvorbis" in encoders:
         candidates.append(FinalEncoding(
             name="WebM/VP8",
             extension="webm",
-            video_args=["-c:v", "libvpx", "-b:v", "2600k", "-pix_fmt", "yuv420p"],
+            video_args=["-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "2200k", "-pix_fmt", "yuv420p"],
             audio_args=["-c:a", "libvorbis", "-q:a", "4"],
+        ))
+
+    if "libvpx-vp9" in encoders and "libopus" in encoders:
+        candidates.append(FinalEncoding(
+            name="WebM/VP9",
+            extension="webm",
+            video_args=["-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "0", "-crf", "36", "-pix_fmt", "yuv420p"],
+            audio_args=["-c:a", "libopus", "-b:a", "128k"],
         ))
 
     for encoding in candidates:

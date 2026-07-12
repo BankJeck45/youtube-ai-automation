@@ -11,13 +11,13 @@ class TestBuildDuckFilter:
     def test_single_region(self):
         result = build_duck_filter([(1.0, 3.0)])
         assert "volume=" in result
-        assert "between(t," in result
+        assert "between(t\\," in result
         assert "0.12" in result
         assert "0.25" in result
 
     def test_multiple_regions(self, sample_speech_regions):
         result = build_duck_filter(sample_speech_regions)
-        assert result.count("between(t,") == 2
+        assert result.count("between(t\\,") == 2
         assert "0.12" in result
         assert "0.25" in result
         assert "eval=frame" in result
@@ -39,8 +39,9 @@ class TestBuildDuckFilter:
         # Should be a valid ffmpeg volume filter
         assert result.startswith("volume=")
         assert ":eval=frame" in result
+        assert "'" not in result
 
     def test_if_expression_structure(self):
         result = build_duck_filter([(5.0, 10.0)])
         assert "if(" in result
-        assert ", 0.12, 0.25)" in result
+        assert "\\,0.12\\,0.25)" in result
