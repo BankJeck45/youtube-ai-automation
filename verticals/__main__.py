@@ -105,8 +105,37 @@ def cmd_produce(args):
 
     print(f"\n  Producing {lang.upper()} video for job {job_id} [niche: {niche_name}]")
 
+    draft["_producing"] = True
+    draft.pop("_production_error", None)
+    current_stage = "produce"
+    previous_excepthook = sys.excepthook
+
+    def record_uncaught_error(exc_type, exc, tb):
+        if exc_type is not SystemExit and draft.get("_producing"):
+            draft["_producing"] = False
+            draft["_production_error"] = str(exc)
+            state.fail_stage(current_stage, str(exc), percent=state._current_percent())
+            state.save(draft_path)
+        previous_excepthook(exc_type, exc, tb)
+
+    sys.excepthook = record_uncaught_error
+
+    def progress(stage: str, percent: int, message: str, artifacts: dict | None = None):
+        nonlocal current_stage
+        current_stage = stage
+        state.update_progress(stage, percent, message, artifacts)
+        state.save(draft_path)
+        log(f"Progress {percent}% — {message}")
+
+    def complete(stage: str, percent: int, artifacts: dict | None = None):
+        state.complete_stage(stage, artifacts, percent=percent)
+        state.save(draft_path)
+
+    progress("produce", 3, "Produksi video dimulai")
+
     # Voiceover (niche-aware voice selection)
     if force or not state.is_done("voiceover"):
+        progress("voiceover", 8, "Membuat voiceover TTS")
         voice_config = get_voice_config(
             profile,
             provider=tts_provider or "edge_tts",
@@ -117,16 +146,19 @@ def cmd_produce(args):
             provider=tts_provider,
             voice_config=voice_config,
         )
-        state.complete_stage("voiceover", {"path": str(vo_path)})
+        complete("voiceover", 18, {"path": str(vo_path)})
     else:
         log("Skipping voiceover (already done)")
         vo_path = Path(state.get_artifact("voiceover", "path"))
+        progress("voiceover", 18, "Voiceover sudah ada, lanjut ke tahap berikutnya", {"path": str(vo_path)})
 
     try:
+        progress("voiceover", 19, "Membaca durasi voiceover")
         voiceover_duration = get_audio_duration(vo_path)
     except Exception as e:
         log(f"Could not read voiceover duration: {e} — estimating from script length")
         voiceover_duration = max(12.0, len(script.split()) / 2.5)
+    progress("voiceover", 20, f"Durasi voiceover sekitar {voiceover_duration:.1f} detik")
 
     # B-roll: one visual every ~3-6 seconds, aligned to narration beats.
     if force or not state.is_done("broll"):
@@ -138,6 +170,7 @@ def cmd_produce(args):
             target_seconds=target_seconds,
             max_count=max_visuals,
         )
+        progress("broll", 22, f"Menyiapkan {visual_count} visual b-roll")
         timed_prompts = build_timed_broll_prompts(
             script,
             draft.get("broll_prompts", ["Cinematic landscape"]),
@@ -147,15 +180,22 @@ def cmd_produce(args):
         )
         draft["broll_prompts_timed"] = timed_prompts
         log(f"Generating {visual_count} narration-aligned b-roll frames (~{target_seconds:.1f}s each)...")
-        frames = generate_broll(timed_prompts, work_dir)
-        state.complete_stage("broll", {"frames": [str(f) for f in frames], "prompts": timed_prompts})
+
+        def broll_progress(done: int, total: int, message: str):
+            pct = 25 + int((max(0, done) / max(total, 1)) * 28)
+            progress("broll", pct, message, {"done": done, "total": total})
+
+        frames = generate_broll(timed_prompts, work_dir, progress_callback=broll_progress)
+        complete("broll", 55, {"frames": [str(f) for f in frames], "prompts": timed_prompts})
     else:
         log("Skipping b-roll (already done)")
         frames = [Path(f) for f in state.get_artifact("broll", "frames", [])]
+        progress("broll", 55, f"Visual b-roll sudah ada ({len(frames)} frame)")
 
     # Whisper + Captions (niche-aware styling)
     caption_config = get_caption_config(profile)
     if force or not state.is_done("captions"):
+        progress("captions", 58, "Membuat subtitle/captions")
         captions_result = generate_captions(
             vo_path, work_dir, lang,
             highlight_color=caption_config.get("highlight_color", "#FFFF00"),
@@ -170,7 +210,7 @@ def cmd_produce(args):
             outline=int(caption_config.get("outline", 3)),
             shadow=int(caption_config.get("shadow", 0)),
         )
-        state.complete_stage("captions", {
+        complete("captions", 66, {
             "srt_path": str(captions_result.get("srt_path", "")),
             "ass_path": str(captions_result.get("ass_path", "")),
         })
@@ -180,16 +220,18 @@ def cmd_produce(args):
             "srt_path": state.get_artifact("captions", "srt_path", ""),
             "ass_path": state.get_artifact("captions", "ass_path", ""),
         }
+        progress("captions", 66, "Subtitle/captions sudah ada")
 
     # Music (niche-aware mood/ducking)
     music_config = get_music_config(profile)
     if force or not state.is_done("music"):
+        progress("music", 68, "Menyiapkan backsound dan ducking suara")
         music_result = select_and_prepare_music(
             vo_path, work_dir,
             duck_speech=music_config.get("duck_volume_speech", 0.12),
             duck_gap=music_config.get("duck_volume_gap", 0.25),
         )
-        state.complete_stage("music", {
+        complete("music", 72, {
             "track_path": str(music_result.get("track_path", "")),
             "duck_filter": music_result.get("duck_filter", ""),
         })
@@ -199,9 +241,11 @@ def cmd_produce(args):
             "track_path": state.get_artifact("music", "track_path", ""),
             "duck_filter": state.get_artifact("music", "duck_filter", ""),
         }
+        progress("music", 72, "Backsound sudah ada")
 
     # Assemble
     if force or not state.is_done("assemble"):
+        progress("assemble", 76, "Merender video final dengan visual, voiceover, subtitle, dan musik")
         video_path = assemble_video(
             frames=frames,
             voiceover=vo_path,
@@ -214,10 +258,11 @@ def cmd_produce(args):
             music_path=music_result.get("track_path"),
             duck_filter=music_result.get("duck_filter"),
         )
-        state.complete_stage("assemble", {"video_path": str(video_path)})
+        complete("assemble", 90, {"video_path": str(video_path)})
     else:
         log("Skipping assembly (already done)")
         video_path = Path(state.get_artifact("assemble", "video_path"))
+        progress("assemble", 90, "Video final sudah dirender", {"video_path": str(video_path)})
 
     # Save SRT to media dir
     srt_path = captions_result.get("srt_path")
@@ -230,15 +275,23 @@ def cmd_produce(args):
 
     if force or not state.is_done("thumbnail"):
         try:
+            progress("thumbnail", 92, "Membuat thumbnail")
             thumb_path = generate_thumbnail(draft, MEDIA_DIR)
             draft["thumbnail"] = str(thumb_path)
-            state.complete_stage("thumbnail", {"path": str(thumb_path)})
+            complete("thumbnail", 98, {"path": str(thumb_path)})
         except Exception as e:
             log(f"Thumbnail generation failed: {e}")
+            state.fail_stage("thumbnail", str(e), percent=98)
+            state.save(draft_path)
     else:
         thumb_path = state.get_artifact("thumbnail", "path", "")
         if thumb_path:
             draft["thumbnail"] = thumb_path
+        progress("thumbnail", 98, "Thumbnail sudah ada")
+
+    draft["_producing"] = False
+    draft.pop("_production_error", None)
+    state.add_event("produce", "done", "Video selesai dibuat", 100)
 
     state.save(draft_path)
 
@@ -330,8 +383,7 @@ def cmd_topics(args):
 
     print(f"\n  Trending topics for [{niche}] ({len(candidates)} found):\n")
     for i, topic in enumerate(candidates, 1):
-        score = f" [{topic.trending_score:.2f}]" if topic.trending_score else ""
-        print(f"  {i:2d}. [{topic.source}] {topic.title}{score}")
+        print(f"  {i:2d}. [{topic.source}] {topic.title}")
         if topic.summary:
             print(f"      {topic.summary[:100]}")
 
