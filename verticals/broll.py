@@ -291,7 +291,7 @@ def _fallback_frame(i: int, out_dir: Path, prompt: str = "") -> Path:
     return path
 
 
-def generate_broll(prompts: list, out_dir: Path) -> list[Path]:
+def generate_broll(prompts: list, out_dir: Path, progress_callback=None) -> list[Path]:
     """Generate b-roll frames, preferring image providers before graphic fallback."""
     api_key = get_gemini_key()
     if not api_key:
@@ -308,6 +308,8 @@ def generate_broll(prompts: list, out_dir: Path) -> list[Path]:
 
     for i, prompt in enumerate(selected_prompts):
         out_path = out_dir / f"broll_{i}.png"
+        if progress_callback:
+            progress_callback(i, len(selected_prompts), f"Starting visual {i + 1}/{len(selected_prompts)}")
 
         if gemini_available:
             log(f"Generating b-roll frame {i+1}/{len(selected_prompts)} via Gemini Imagen...")
@@ -315,6 +317,8 @@ def generate_broll(prompts: list, out_dir: Path) -> list[Path]:
                 _generate_image_gemini(prompt, out_path, api_key)
                 _fit_to_portrait(Image.open(out_path), out_path)
                 frames.append(out_path)
+                if progress_callback:
+                    progress_callback(i + 1, len(selected_prompts), f"Visual {i + 1}/{len(selected_prompts)} selesai")
                 continue
             except Exception as e:
                 log(f"Gemini frame {i+1} failed: {e} — trying Pollinations fallback")
@@ -326,11 +330,15 @@ def generate_broll(prompts: list, out_dir: Path) -> list[Path]:
             log(f"Generating b-roll frame {i+1}/{len(selected_prompts)} via Pollinations fallback...")
             _generate_image_pollinations(prompt, out_path)
             frames.append(out_path)
+            if progress_callback:
+                progress_callback(i + 1, len(selected_prompts), f"Visual {i + 1}/{len(selected_prompts)} selesai")
             continue
 
         except Exception as e:
             log(f"Image fallback frame {i+1} failed: {e} — using readable graphic fallback")
             frames.append(_fallback_frame(i, out_dir, prompt))
+            if progress_callback:
+                progress_callback(i + 1, len(selected_prompts), f"Visual fallback {i + 1}/{len(selected_prompts)} selesai")
 
     return frames
 
