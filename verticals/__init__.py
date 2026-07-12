@@ -40,3 +40,52 @@ def _install_ffmpeg_render_hotfix() -> None:
 
 
 _install_ffmpeg_render_hotfix()
+
+
+def _install_tts_provider_hotfix() -> None:
+    """Avoid macOS-only say TTS on Linux production hosts."""
+    try:
+        import shutil
+
+        from . import tts
+    except Exception:
+        return
+
+    original_get_tts_provider = tts.get_tts_provider
+    original_generate_voiceover = tts.generate_voiceover
+    original_generate_say = tts._generate_say
+
+    if getattr(original_generate_voiceover, "_verticals_tts_say_hotfix", False):
+        return
+
+    def say_available() -> bool:
+        return shutil.which("say") is not None
+
+    def safe_get_tts_provider(name=None):
+        requested = (name or "").strip().lower().replace("-", "_")
+        provider = original_get_tts_provider(name)
+        if (requested == "say" or provider == "say") and not say_available():
+            return original_get_tts_provider("edge")
+        return provider
+
+    def safe_generate_say(script, out_dir):
+        if say_available():
+            return original_generate_say(script, out_dir)
+        try:
+            return tts._generate_edge_tts(script, out_dir, "en")
+        except Exception as exc:
+            raise RuntimeError(f"macOS say TTS is unavailable and Edge TTS fallback failed: {exc}") from exc
+
+    def safe_generate_voiceover(script, out_dir, lang="en", provider=None, voice_config=None):
+        requested = (provider or "").strip().lower().replace("-", "_")
+        if requested == "say" and not say_available():
+            provider = "edge"
+        return original_generate_voiceover(script, out_dir, lang, provider, voice_config)
+
+    safe_generate_voiceover._verticals_tts_say_hotfix = True
+    tts.get_tts_provider = safe_get_tts_provider
+    tts._generate_say = safe_generate_say
+    tts.generate_voiceover = safe_generate_voiceover
+
+
+_install_tts_provider_hotfix()
